@@ -1,0 +1,139 @@
+version: "2.1"
+
+executors:
+  # `main` uses the `cimg/go:1.17` docker image.
+  main:
+    docker:
+      - image: cimg/go:1.17
+
+  # `base` uses the `cimg/base` docker image.
+  base:
+    docker:
+      - image: cimg/base:2020.07
+
+  # `macos` uses the macOS machine image.
+  macos:
+    macos:
+      xcode: 12.4.0
+      resource_class: medium
+
+  # `windows` uses the Windows machine image.
+  windows:
+    machine:
+      image: "windows-server-2019-vs2019:stable"
+      resource_class: "windows.medium"
+      shell: "powershell.exe -ExecutionPolicy Bypass"
+
+
+jobs:
+
+  # `test_go` tests the source code.
+  test_go:
+    executor: main
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: false
+      - run: make fmt
+      - run: make imports
+      - run: make test_go
+      - run: git diff --exit-code
+
+  # `test_cli` tests the executable.
+  test_cli:
+    executor: main
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: false
+      - run: make tidy
+      - run: make bin/icecube
+      - run: make temp/server.crt
+      - run: make test_cli
+
+  # `build` builds the executables
+  build:
+    executor: main
+    steps:
+      - checkout
+
+      # Update apt cache
+      - run: sudo apt-get update
+
+      # Tidy dependencies
+      - run: make tidy
+
+      # Build Executeables
+      - run: make build_release
+
+      # Remove gox
+      - run: rm -f bin/gox
+
+      - store_artifacts:
+          path: bin
+          destination: /
+      - persist_to_workspace:
+          root: bin
+          paths:
+            - icecube_darwin_amd64
+            - icecube_darwin_arm64
+            - icecube_linux_386
+            - icecube_linux_amd64
+            - icecube_linux_arm
+            - icecube_linux_arm64
+            - icecube_windows_386.exe
+            - icecube_windows_amd64.exe
+
+  # `build_docker` builds the docker container.
+  build_docker:
+    executor: main
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: false
+      - run: make docker_build
+      - run: make docker_version
+
+  # `verify_linux` verifys the linux build
+  verify_linux:
+    executor: base
+    steps:
+      - attach_workspace:
+          at: bin
+      - run: bin/icecube_linux_386 --help
+      - run: bin/icecube_linux_amd64 --help
+
+  # `verify_macos` verifys the macOS build
+  verify_macos:
+    executor: macos
+    steps:
+      - attach_workspace:
+          at: bin
+      - run: bin/icecube_darwin_amd64 --help
+
+  # `verify_windows` verifys the windows build
+  verify_windows:
+    executor: windows
+    steps:
+      - attach_workspace:
+          at: bin
+      - run: bin/icecube_windows_386.exe --help
+      - run: bin/icecube_windows_amd64.exe --help
+
+workflows:
+  version: 2
+  main:
+    jobs:
+      - test_go
+      - test_cli
+      - build
+      - build_docker
+      - verify_linux:
+          requires:
+            - build
+      - verify_macos:
+          requires:
+            - build
+      - verify_windows:
+          requires:
+            - build
