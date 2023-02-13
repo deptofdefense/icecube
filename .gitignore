@@ -1,3 +1,13 @@
+# compiled binaries
 bin
+
+# local environment files
 .envrc.local
+env.local.bat
+env.local.ps1
+
+# temporary directories
 temp
+
+# macOS
+.DS_Store

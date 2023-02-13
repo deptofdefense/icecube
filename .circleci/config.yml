@@ -1,20 +1,34 @@
+# =================================================================
+#
+# Work of the U.S. Department of Defense, Defense Digital Service.
+# Released as open source under the MIT License.  See LICENSE file.
+#
+# =================================================================
+
 version: "2.1"
 
 executors:
-  # `main` uses the `cimg/go:1.17` docker image.
-  main:
-    docker:
-      - image: cimg/go:1.17
+
+  # `arm` uses an ARM machine image.
+  arm:
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: arm.medium
 
   # `base` uses the `cimg/base` docker image.
   base:
     docker:
-      - image: cimg/base:2020.07
+      - image: cimg/base:2023.02
+
+  # `main` uses the `cimg/go:1.20` docker image.
+  main:
+    docker:
+      - image: cimg/go:1.20
 
   # `macos` uses the macOS machine image.
   macos:
     macos:
-      xcode: 12.4.0
+      xcode: 13.4.1
       resource_class: medium
 
   # `windows` uses the Windows machine image.
@@ -63,6 +77,9 @@ jobs:
       # Tidy dependencies
       - run: make tidy
 
+      # Print supported OS/Arch combinations
+      - run: bin/gox -osarch-list
+
       # Build Executeables
       - run: make build_release
 
@@ -77,10 +94,16 @@ jobs:
           paths:
             - icecube_darwin_amd64
             - icecube_darwin_arm64
+            - icecube_freebsd_386
+            - icecube_freebsd_amd64
+            - icecube_freebsd_arm
             - icecube_linux_386
             - icecube_linux_amd64
             - icecube_linux_arm
             - icecube_linux_arm64
+            - icecube_openbsd_386
+            - icecube_openbsd_amd64
+            - icecube_solaris_amd64
             - icecube_windows_386.exe
             - icecube_windows_amd64.exe
 
@@ -102,6 +125,15 @@ jobs:
           at: bin
       - run: bin/icecube_linux_386 --help
       - run: bin/icecube_linux_amd64 --help
+
+  # `verify_linux_arm` verifys the linux/arm build
+  verify_linux_arm:
+    executor: arm
+    steps:
+      - attach_workspace:
+          at: bin
+      - run: bin/icecube_linux_arm --help
+      - run: bin/icecube_linux_arm64 --help
 
   # `verify_macos` verifys the macOS build
   verify_macos:
@@ -129,6 +161,9 @@ workflows:
       - build
       - build_docker
       - verify_linux:
+          requires:
+            - build
+      - verify_linux_arm:
           requires:
             - build
       - verify_macos:

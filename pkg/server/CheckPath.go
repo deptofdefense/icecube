@@ -8,13 +8,13 @@
 package server
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 )
 
 // CheckPath returns true if the given path is ok, which means the path contains no "." or ".." path elements.
-func CheckPath(path string) bool {
+func CheckPath(p string) bool {
 	// If the path includes a ".." element, filePath.Clean will return a different string.
 	// If the path starts with "../", then it points to a parent directory.
-	return path == filepath.Clean(path) && !strings.HasPrefix(path, "../")
+	return p == path.Clean(p) && !strings.HasPrefix(p, "../")
 }

@@ -16,22 +16,37 @@ start the icecube server
 Usage:
   icecube serve [flags]
 
+Examples:
+serve --addr :8080 --server-cert server.crt --server-key server.key --root /www
+serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-systems ["/www"] --sites '{"localhost": "/www"}'  
+
 Flags:
   -a, --addr string                    address that icecube will listen on (default ":8080")
-      --behavior-not-found string      default behavior when a file is not found.  One of: redirect,none (default "none")
+      --aws-access-key-id string       AWS Access Key ID
+      --aws-default-region string      AWS Default Region
+      --aws-profile string             AWS Profile
+      --aws-region string              AWS Region (overrides default region)
+      --aws-secret-access-key string   AWS Secret Access Key
+      --aws-session-token string       AWS Session Token
+      --behavior-not-found string      default behavior when a file is not found.  One of: redirect,none (default "none")       
+      --directory-index string         index file for directories (default "index.html")
+      --directory-trailing-slash       append trailing slash to directories
       --dry-run                        exit after checking configuration
+      --file-systems string            additional file systems in the format of a json array of strings
   -h, --help                           help for serve
       --keylog string                  path to the key log output.  Also requires unsafe flag.
   -l, --log string                     path to the log output.  Defaults to stdout. (default "-")
       --public-location string         the public location of the server used for redirects
       --redirect string                address that icecube will listen to and redirect requests to the public location
-  -r, --root string                    path to the document root served
-      --server-cert string             path to server public cert
-      --server-key string              path to server private key
+  -r, --root string                    path to the default document root served
+      --server-cert string             path to default server public cert
+      --server-key string              path to default server private key
+      --server-key-pairs string        additional server key pairs in the format of a json array of arrays [[path to server public cert, path to server private key],...]
+      --sites string                   sites hosted by the server in the format of a json map of server name to file system     
       --timeout-idle string            maximum amount of time to wait for the next request when keep-alives are enabled (default "5m")
       --timeout-read string            maximum duration for reading the entire request (default "15m")
       --timeout-write string           maximum duration before timing out writes of the response (default "5m")
-      --tls-cipher-suites string       list of supported cipher suites for TLS versions up to 1.2 (TLS 1.3 is not configurable)
+      --tls-cipher-suites string       list of supported cipher suites for TLS versions up to 1.2 (TLS 1.3 is not configurable) 
       --tls-curve-preferences string   curve preferences (default "X25519,CurveP256,CurveP384,CurveP521")
       --tls-max-version string         maximum TLS version accepted for requests (default "1.3")
       --tls-min-version string         minimum TLS version accepted for requests (default "1.0")

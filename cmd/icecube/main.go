@@ -9,27 +9,31 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	awssession "github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gofrs/uuid"
-	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/deptofdefense/icecube/pkg/fs"
 	"github.com/deptofdefense/icecube/pkg/log"
 	"github.com/deptofdefense/icecube/pkg/server"
 )
 
 const (
-	IcecubeVersion = "1.0.0"
+	IcecubeVersion = "1.0.1"
 )
 
 const (
@@ -67,7 +71,7 @@ const (
 )
 
 var (
-	Behaviors = []string{
+	NotFoundBehaviors = []string{
 		BehaviorRedirect,
 		BehaviorNone,
 	}
@@ -112,15 +116,39 @@ func stringSliceIndex(stringSlice []string, value string) int {
 	return -1
 }
 
+func unmarshalServerKeyPairs(str string) ([]tls.Certificate, error) {
+	if len(str) == 0 {
+		return []tls.Certificate{}, nil
+	}
+	serverKeyPairs := [][2]string{}
+	err := json.Unmarshal([]byte(str), &serverKeyPairs)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshaling server key pairs: %w", err)
+	}
+	certificates := []tls.Certificate{}
+	for i, kp := range serverKeyPairs {
+		cert, err := tls.LoadX509KeyPair(kp[0], kp[1])
+		if err != nil {
+			return nil, fmt.Errorf("error loading server key pair %d: %w", i, err)
+		}
+		certificates = append(certificates, cert)
+	}
+	return certificates, nil
+}
+
 const (
 	flagListenAddress   = "addr"
 	flagRedirectAddress = "redirect"
 	flagPublicLocation  = "public-location"
 	//
-	flagServerCert = "server-cert"
-	flagServerKey  = "server-key"
+	flagDefaultServerCert = "server-cert"
+	flagDefaultServerKey  = "server-key"
+	flagServerKeyPairs    = "server-key-pairs"
 	//
-	flagRootPath = "root"
+	flagRootPath    = "root"
+	flagFileSystems = "file-systems"
+	//
+	flagSites = "sites"
 	//
 	flagTimeoutRead  = "timeout-read"
 	flagTimeoutWrite = "timeout-write"
@@ -133,11 +161,21 @@ const (
 	//
 	flagBehaviorNotFound = "behavior-not-found"
 	//
+	flagDirectoryIndex         = "directory-index"
+	flagDirectoryTrailingSlash = "directory-trailing-slash"
+	//
 	flagLogPath    = "log"
 	flagKeyLogPath = "keylog"
 	//
 	flagUnsafe = "unsafe"
 	flagDryRun = "dry-run"
+	//
+	flagAWSProfile         = "aws-profile"
+	flagAWSDefaultRegion   = "aws-default-region"
+	flagAWSRegion          = "aws-region"
+	flagAWSAccessKeyID     = "aws-access-key-id"
+	flagAWSSecretAccessKey = "aws-secret-access-key"
+	flagAWSSessionToken    = "aws-session-token"
 )
 
 type File struct {
@@ -147,20 +185,26 @@ type File struct {
 	Path    string
 }
 
-func initFlags(flag *pflag.FlagSet) {
+func initServeFlags(flag *pflag.FlagSet) {
 	flag.String(flagPublicLocation, "", "the public location of the server used for redirects")
 	flag.StringP(flagListenAddress, "a", ":8080", "address that icecube will listen on")
 	flag.String(flagRedirectAddress, "", "address that icecube will listen to and redirect requests to the public location")
-	flag.String(flagServerCert, "", "path to server public cert")
-	flag.String(flagServerKey, "", "path to server private key")
-	flag.StringP(flagRootPath, "r", "", "path to the document root served")
+	flag.String(flagDefaultServerCert, "", "path to default server public cert")
+	flag.String(flagDefaultServerKey, "", "path to default server private key")
+	flag.String(flagServerKeyPairs, "", "additional server key pairs in the format of a json array of arrays [[path to server public cert, path to server private key],...]")
+	flag.StringP(flagRootPath, "r", "", "path to the default document root served")
+	flag.String(flagFileSystems, "", "additional file systems in the format of a json array of strings")
+	flag.String(flagSites, "", "sites hosted by the server in the format of a json map of server name to file system")
 	flag.StringP(flagLogPath, "l", "-", "path to the log output.  Defaults to stdout.")
 	flag.String(flagKeyLogPath, "", "path to the key log output.  Also requires unsafe flag.")
-	flag.String(flagBehaviorNotFound, BehaviorNone, "default behavior when a file is not found.  One of: "+strings.Join(Behaviors, ","))
+	flag.String(flagDirectoryIndex, "index.html", "index file for directories")
+	flag.Bool(flagDirectoryTrailingSlash, false, "append trailing slash to directories")
+	flag.String(flagBehaviorNotFound, BehaviorNone, "default behavior when a file is not found.  One of: "+strings.Join(NotFoundBehaviors, ","))
 	initTimeoutFlags(flag)
 	initTLSFlags(flag)
 	flag.Bool(flagUnsafe, false, "allow unsafe configuration")
 	flag.Bool(flagDryRun, false, "exit after checking configuration")
+	initAWSFlags(flag)
 }
 
 func initTimeoutFlags(flag *pflag.FlagSet) {
@@ -176,6 +220,15 @@ func initTLSFlags(flag *pflag.FlagSet) {
 	flag.String(flagTLSCurvePreferences, strings.Join(DefaultCurveIDs, ","), "curve preferences")
 }
 
+func initAWSFlags(flag *pflag.FlagSet) {
+	flag.String(flagAWSProfile, "", "AWS Profile")
+	flag.String(flagAWSDefaultRegion, "", "AWS Default Region")
+	flag.StringP(flagAWSRegion, "", "", "AWS Region (overrides default region)")
+	flag.StringP(flagAWSAccessKeyID, "", "", "AWS Access Key ID")
+	flag.StringP(flagAWSSecretAccessKey, "", "", "AWS Secret Access Key")
+	flag.StringP(flagAWSSessionToken, "", "", "AWS Session Token")
+}
+
 func initViper(cmd *cobra.Command) (*viper.Viper, error) {
 	v := viper.New()
 	err := v.BindPFlags(cmd.Flags())
@@ -185,6 +238,39 @@ func initViper(cmd *cobra.Command) (*viper.Viper, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv() // set environment variables to overwrite config
 	return v, nil
+}
+
+func initS3Client(v *viper.Viper) (*s3.S3, *awssession.Session, error) {
+	accessKeyID := v.GetString(flagAWSAccessKeyID)
+	secretAccessKey := v.GetString(flagAWSSecretAccessKey)
+	sessionToken := v.GetString(flagAWSSessionToken)
+
+	region := v.GetString(flagAWSRegion)
+	if len(region) == 0 {
+		if defaultRegion := v.GetString(flagAWSDefaultRegion); len(defaultRegion) > 0 {
+			region = defaultRegion
+		}
+	}
+
+	config := aws.Config{
+		MaxRetries: aws.Int(3),
+		Region:     aws.String(region),
+	}
+
+	if len(accessKeyID) > 0 && len(secretAccessKey) > 0 {
+		config.Credentials = credentials.NewStaticCredentials(
+			accessKeyID,
+			secretAccessKey,
+			sessionToken)
+	}
+
+	session, err := awssession.NewSessionWithOptions(awssession.Options{
+		Config: config,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating new AWS session: %w", err)
+	}
+	return s3.New(session), session, nil
 }
 
 func checkConfig(v *viper.Viper) error {
@@ -202,18 +288,40 @@ func checkConfig(v *viper.Viper) error {
 			return fmt.Errorf("public location must start with \"https://\"")
 		}
 	}
-	serverCert := v.GetString(flagServerCert)
-	if len(serverCert) == 0 {
-		return fmt.Errorf("server cert is missing")
+	serverKeyPairs := v.GetString(flagServerKeyPairs)
+	if len(serverKeyPairs) > 0 {
+		if err := json.Unmarshal([]byte(serverKeyPairs), &([][2]string{})); err != nil {
+			return fmt.Errorf("invalid format for server key pairs %s: %w", serverKeyPairs, err)
+		}
+	} else {
+		defaultServerCert := v.GetString(flagDefaultServerCert)
+		if len(defaultServerCert) == 0 {
+			return fmt.Errorf("default server cert is missing")
+		}
+		defaultServerKey := v.GetString(flagDefaultServerKey)
+		if len(defaultServerKey) == 0 {
+			return fmt.Errorf("default server key is missing")
+		}
 	}
-	serverKey := v.GetString(flagServerKey)
-	if len(serverKey) == 0 {
-		return fmt.Errorf("server key is missing")
+	fileSystems := v.GetString(flagFileSystems)
+	if len(fileSystems) > 0 {
+		if err := json.Unmarshal([]byte(fileSystems), &([]string{})); err != nil {
+			return fmt.Errorf("invalid format for file systems: %w", err)
+		}
+	} else {
+		rootPath := v.GetString(flagRootPath)
+		if len(rootPath) == 0 {
+			return fmt.Errorf("root path is missing")
+		}
 	}
-	rootPath := v.GetString(flagRootPath)
-	if len(rootPath) == 0 {
-		return fmt.Errorf("root path is missing")
+
+	sites := v.GetString(flagSites)
+	if len(sites) > 0 {
+		if err := json.Unmarshal([]byte(sites), &(map[string]string{})); err != nil {
+			return fmt.Errorf("invalid format for sites: %w", err)
+		}
 	}
+
 	logPath := v.GetString(flagLogPath)
 	if len(logPath) == 0 {
 		return fmt.Errorf("log path is missing")
@@ -354,10 +462,10 @@ func initCipherSuites(cipherSuiteNamesString string, supportedCipherSuites []*tl
 	return cipherSuites, nil
 }
 
-func initTLSConfig(v *viper.Viper, serverKeyPair tls.Certificate, minVersion string, maxVersion string, cipherSuites []uint16, keyLogger io.Writer) *tls.Config {
+func initTLSConfig(v *viper.Viper, certificates []tls.Certificate, minVersion string, maxVersion string, cipherSuites []uint16, keyLogger io.Writer) *tls.Config {
 
 	config := &tls.Config{
-		Certificates: []tls.Certificate{serverKeyPair},
+		Certificates: certificates,
 		MinVersion:   TLSVersionIdentifiers[minVersion],
 		MaxVersion:   TLSVersionIdentifiers[maxVersion],
 		KeyLogWriter: keyLogger,
@@ -375,6 +483,87 @@ func initTLSConfig(v *viper.Viper, serverKeyPair tls.Certificate, minVersion str
 		config.CurvePreferences = curvePreferences
 	}
 	return config
+}
+
+func initFileSystem(rootPath string, s3Client *s3.S3) fs.FileSystem {
+	if strings.HasPrefix(rootPath, "s3://") {
+		rootParts := strings.Split(rootPath[len("s3://"):], "/")
+		bucket := rootParts[0]
+		prefix := strings.Join(rootParts[1:], "/")
+		bucketCreationDate := time.Now()
+		listBucketsOutput, err := s3Client.ListBuckets(&s3.ListBucketsInput{})
+		if err == nil {
+			for _, b := range listBucketsOutput.Buckets {
+				if bucket == aws.StringValue(b.Name) {
+					bucketCreationDate = aws.TimeValue(b.CreationDate)
+					break
+				}
+			}
+		}
+		return fs.NewS3FileSystem(bucket, prefix, s3Client, bucketCreationDate)
+	}
+
+	return fs.NewLocalFileSystem(rootPath)
+}
+
+func initFileSystems(v *viper.Viper) (map[string]fs.FileSystem, error) {
+	rootPath := v.GetString(flagRootPath)
+	fileSystemPathsString := v.GetString(flagFileSystems)
+	fileSystemPathsSlice := []string{}
+	if len(fileSystemPathsString) > 0 {
+		err := json.Unmarshal([]byte(fileSystemPathsString), &fileSystemPathsSlice)
+		if err != nil {
+			return nil, fmt.Errorf("invalid format for file systems: %w", err)
+		}
+	}
+
+	s3ClientNeeded := false
+	if strings.HasPrefix(rootPath, "s3://") {
+		s3ClientNeeded = true
+	} else {
+		for _, str := range fileSystemPathsSlice {
+			if strings.HasPrefix(str, "s3://") {
+				s3ClientNeeded = true
+				break
+			}
+		}
+	}
+
+	var s3Client *s3.S3
+
+	if s3ClientNeeded {
+		client, _, err := initS3Client(v)
+		if err != nil {
+			return nil, fmt.Errorf("error initializing s3 file system: %w", err)
+		}
+		s3Client = client
+	}
+
+	fileSystems := map[string]fs.FileSystem{}
+
+	if len(rootPath) > 0 {
+		fileSystems[rootPath] = initFileSystem(rootPath, s3Client)
+	}
+
+	if len(fileSystemPathsSlice) > 0 {
+		for _, fileSystemPath := range fileSystemPathsSlice {
+			fileSystems[fileSystemPath] = initFileSystem(fileSystemPath, s3Client)
+		}
+	}
+
+	return fileSystems, nil
+}
+
+func initSites(v *viper.Viper) (map[string]string, error) {
+	sitesString := v.GetString(flagSites)
+	sitesMap := map[string]string{}
+	if len(sitesString) > 0 {
+		err := json.Unmarshal([]byte(sitesString), &sitesMap)
+		if err != nil {
+			return nil, fmt.Errorf("invalid format for sites: %w", err)
+		}
+	}
+	return sitesMap, nil
 }
 
 func main() {
@@ -442,9 +631,12 @@ func main() {
 		Use:                   `serve [flags]`,
 		DisableFlagsInUseLine: true,
 		Short:                 "start the icecube server",
-		SilenceErrors:         true,
-		SilenceUsage:          true,
+		Example: `serve --addr :8080 --server-cert server.crt --server-key server.key --root /www
+serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-systems ["/www"] --sites '{"localhost": "/www"}'`,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+
 			v, err := initViper(cmd)
 			if err != nil {
 				return fmt.Errorf("error initializing viper: %w", err)
@@ -486,13 +678,39 @@ func main() {
 			listenAddress := v.GetString(flagListenAddress)
 			redirectAddress := v.GetString(flagRedirectAddress)
 			publicLocation := v.GetString(flagPublicLocation)
-			rootPath := v.GetString(flagRootPath)
 
-			root := afero.NewBasePathFs(afero.NewReadOnlyFs(afero.NewOsFs()), rootPath)
+			defaultRootPath := v.GetString(flagRootPath)
 
-			serverKeyPair, err := tls.LoadX509KeyPair(v.GetString(flagServerCert), v.GetString(flagServerKey))
+			fileSystems, err := initFileSystems(v)
 			if err != nil {
-				return fmt.Errorf("error loading server key pair: %w", err)
+				return fmt.Errorf("error initializing file systems: %w", err)
+			}
+
+			sites, err := initSites(v)
+			if err != nil {
+				return fmt.Errorf("error initializing sites: %w", err)
+			}
+
+			var defaultServerKeyPair *tls.Certificate
+			if len(v.GetString(flagDefaultServerCert)) > 0 {
+				kp, err := tls.LoadX509KeyPair(v.GetString(flagDefaultServerCert), v.GetString(flagDefaultServerKey))
+				if err != nil {
+					return fmt.Errorf("error loading default server key pair: %w", err)
+				}
+				defaultServerKeyPair = &kp
+			}
+
+			serverKeyPairs, err := unmarshalServerKeyPairs(v.GetString((flagServerKeyPairs)))
+			if err != nil {
+				return fmt.Errorf("error loading server key pairs: %w", err)
+			}
+
+			if defaultServerKeyPair == nil {
+				// if default server key pair is nil, then set the value to the first key pair provided
+				defaultServerKeyPair = &serverKeyPairs[0]
+			} else {
+				// if default server key pair is not nil, then add to the slice of key pairs
+				serverKeyPairs = append(serverKeyPairs, *defaultServerKeyPair)
 			}
 
 			tlsMinVersion := v.GetString(flagTLSMinVersion)
@@ -508,9 +726,12 @@ func main() {
 				return fmt.Errorf("error initializing cipher suites: %w", err)
 			}
 
-			tlsConfig := initTLSConfig(v, serverKeyPair, tlsMinVersion, tlsMaxVersion, cipherSuites, keyLogger)
+			tlsConfig := initTLSConfig(v, serverKeyPairs, tlsMinVersion, tlsMaxVersion, cipherSuites, keyLogger)
 
 			redirectNotFound := v.GetString(flagBehaviorNotFound) == BehaviorRedirect
+
+			directoryIndex := v.GetString(flagDirectoryIndex)
+			directoryTrailingSlash := v.GetBool(flagDirectoryTrailingSlash)
 
 			httpsServer := &http.Server{
 				Addr:         listenAddress,
@@ -522,6 +743,7 @@ func main() {
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					//
 					icecubeTraceID := newTraceID()
+					server_name := r.TLS.ServerName
 					//
 					_ = logger.Log("Request", map[string]interface{}{
 						"url":              r.URL.String(),
@@ -531,27 +753,48 @@ func main() {
 						"method":           r.Method,
 						"icecube_trace_id": icecubeTraceID,
 						"tls_version":      getTLSVersion(r),
+						"tls_server_name":  server_name,
 					})
 
+					// Check site
+					fileSystemPath := defaultRootPath
+					if len(sites) > 0 {
+						str, ok := sites[server_name]
+						if !ok {
+							_ = logger.Log("Could not find site for server name", map[string]interface{}{
+								"icecube_trace_id": icecubeTraceID,
+								"url":              r.URL.String(),
+								"host":             r.Host,
+								"tls_server_name":  server_name,
+							})
+							http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+							return
+						}
+						fileSystemPath = str
+					}
+
+					fs := fileSystems[fileSystemPath]
+
 					// Get path from URL
-					p := server.TrimTrailingForwardSlash(server.CleanPath(r.URL.Path))
+					cleanPath := server.CleanPath(r.URL.Path)
+					trimmedPath := server.TrimTrailingForwardSlash(cleanPath)
 
 					// If path is not clean
-					if !server.CheckPath(p) {
+					if !server.CheckPath(trimmedPath) {
 						_ = logger.Log("Invalid path", map[string]interface{}{
 							"icecube_trace_id": icecubeTraceID,
 							"url":              r.URL.String(),
-							"path":             p,
+							"path":             trimmedPath,
 						})
 						http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 						return
 					}
 
-					fi, err := root.Stat(p)
+					fi, err := fs.Stat(trimmedPath)
 					if err != nil {
 						if os.IsNotExist(err) {
 							_ = logger.Log("Not found", map[string]interface{}{
-								"path":             p,
+								"path":             trimmedPath,
 								"icecube_trace_id": icecubeTraceID,
 							})
 							if redirectNotFound {
@@ -562,15 +805,27 @@ func main() {
 							return
 						}
 						_ = logger.Log("Error stating file", map[string]interface{}{
-							"path":             p,
+							"path":             trimmedPath,
 							"icecube_trace_id": icecubeTraceID,
+							"error":            err.Error(),
 						})
 						http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 						return
 					}
 					if fi.IsDir() {
-						indexPath := filepath.Join(p, "index.html")
-						indexFileInfo, err := root.Stat(indexPath)
+						if directoryTrailingSlash {
+							if !strings.HasSuffix(cleanPath, "/") {
+								http.Redirect(w, r, cleanPath+"/", http.StatusSeeOther)
+								return
+							}
+						}
+						if len(directoryIndex) == 0 {
+							// if no directory index is to be checked, then return not found
+							http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+							return
+						}
+						indexPath := fs.Join(trimmedPath, directoryIndex)
+						indexFileInfo, err := fs.Stat(indexPath)
 						if err != nil && !os.IsNotExist(err) {
 							_ = logger.Log("Error stating index file", map[string]interface{}{
 								"path":             indexPath,
@@ -584,10 +839,10 @@ func main() {
 							http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 							return
 						}
-						server.ServeFile(w, r, root, indexPath, time.Time{}, false, nil)
+						server.ServeFile(w, r, fs, indexPath, time.Time{}, false, nil)
 						return
 					}
-					server.ServeFile(w, r, root, p, fi.ModTime(), true, nil)
+					server.ServeFile(w, r, fs, trimmedPath, fi.ModTime(), true, nil)
 				}),
 			}
 			// If dry run, then return before starting servers.
@@ -626,7 +881,7 @@ func main() {
 			return httpsServer.ListenAndServeTLS("", "")
 		},
 	}
-	initFlags(serveCommand.Flags())
+	initServeFlags(serveCommand.Flags())
 
 	versionCommand := &cobra.Command{
 		Use:                   `version`,
