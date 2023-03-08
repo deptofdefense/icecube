@@ -743,7 +743,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					//
 					icecubeTraceID := newTraceID()
-					server_name := r.TLS.ServerName
+					tlsServerName := r.TLS.ServerName
 					//
 					_ = logger.Log("Request", map[string]interface{}{
 						"url":              r.URL.String(),
@@ -753,19 +753,19 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 						"method":           r.Method,
 						"icecube_trace_id": icecubeTraceID,
 						"tls_version":      getTLSVersion(r),
-						"tls_server_name":  server_name,
+						"tls_server_name":  tlsServerName,
 					})
 
 					// Check site
 					fileSystemPath := defaultRootPath
 					if len(sites) > 0 {
-						str, ok := sites[server_name]
+						str, ok := sites[tlsServerName]
 						if !ok {
 							_ = logger.Log("Could not find site for server name", map[string]interface{}{
 								"icecube_trace_id": icecubeTraceID,
 								"url":              r.URL.String(),
 								"host":             r.Host,
-								"tls_server_name":  server_name,
+								"tls_server_name":  tlsServerName,
 							})
 							http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 							return

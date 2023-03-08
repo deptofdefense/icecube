@@ -10,7 +10,6 @@ package fs
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"path"
 	"strings"
 	"time"
@@ -89,7 +88,7 @@ func (fs *S3FileSystem) Open(name string) (io.ReadSeeker, error) {
 			if err != nil {
 				return 0, err
 			}
-			body, err := ioutil.ReadAll(getObjectOutput.Body)
+			body, err := io.ReadAll(getObjectOutput.Body)
 			if err != nil {
 				return 0, err
 			}

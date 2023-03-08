@@ -24,7 +24,12 @@ executors:
   main:
     docker:
       - image: cimg/go:1.20
-    resource_class: medium
+
+  # `main_xlarge` uses the `cimg/go:1.20` docker image with a large resource class.
+  main_xlarge:
+    docker:
+      - image: cimg/go:1.20
+    resource_class: xlarge
 
   # `macos` uses the macOS machine image.
   macos:
@@ -68,7 +73,7 @@ jobs:
 
   # `build` builds the executables
   build:
-    executor: main
+    executor: main_xlarge
     steps:
       - checkout
 
