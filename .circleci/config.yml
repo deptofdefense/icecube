@@ -24,6 +24,7 @@ executors:
   main:
     docker:
       - image: cimg/go:1.20
+    resource_class: medium
 
   # `macos` uses the macOS machine image.
   macos:
