@@ -1,6 +1,6 @@
 $dir = Split-Path -parent $PSCommandpath
 
-$os = "darwin freebsd linux openbsd solaris windows"
+$os = "darwin freebsd linux netbsd openbsd solaris windows"
 if ($Args.Count -gt 0) {
     $os = $Args[0]
 }

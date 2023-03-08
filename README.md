@@ -55,7 +55,7 @@ Flags:
 
 ### Network Encryption
 
-**icecube** requires the use of a server certificate.  The server certificate is loaded from a PEM-encoded x509 key pair using the [LoadX509KeyPair](https://golang.org/pkg/crypto/tls/#LoadX509KeyPair) function.  The location of the key pair is specified using the `--server-cert` and `--server-key` command line flags.
+**icecube** requires the use of a server certificate.  The server certificate is loaded from a PEM-encoded x509 key pair using the [LoadX509KeyPair](https://golang.org/pkg/crypto/tls/#LoadX509KeyPair) function.  The location of the key pair is specified using the `--server-cert` and `--server-key` command line flags.  Alternatively, if you wish to use [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs` command line flag to specify multiple certificates.
 
 ## Examples
 
@@ -67,6 +67,15 @@ icecube serve \
 --server-key temp/server.key \
 --root examples/public \
 --behavior-not-found redirect
+```
+
+If you wish to serve multiple sites using [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs`, `file-systems`, and `sites` command line arguments.
+
+```shell
+icecube serve \
+--server-key-pairs '[["temp/a.crt", "temp/a.key"], ["temp/b.crt", "temp/b.key"]]' \
+--file-systems '["/www/a", "/www/b"]' \
+--sites '{"a.localhost": "/www/a", "b.localhost" : "/www/b"}'
 ```
 
 ## Building

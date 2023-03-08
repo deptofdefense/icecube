@@ -111,6 +111,9 @@ jobs:
             - icecube_linux_amd64
             - icecube_linux_arm
             - icecube_linux_arm64
+            - icecube_netbsd_386
+            - icecube_netbsd_amd64
+            - icecube_netbsd_arm
             - icecube_openbsd_386
             - icecube_openbsd_amd64
             - icecube_solaris_amd64

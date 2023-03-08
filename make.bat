@@ -147,17 +147,20 @@ if %1%==serve_example_sni (
         .\make.bat temp/server.crt
     )
 
-    if not exist "%~dp0temp\subdomain.crt" (
-        .\make.bat temp/subdomain.crt
+    if not exist "%~dp0temp\server_a.crt" (
+        .\make.bat temp/server_a.crt
+    )
+
+    if not exist "%~dp0temp\server_b.crt" (
+        .\make.bat temp/server_b.crt
     )
     
 
     .\bin\icecube.exe serve ^
     --addr :8080 ^
-    --server-cert temp\subdomain.crt ^
-    --server-key temp\subdomain.key ^
-    --server-key-pairs "[[\"temp\\server.crt\", \"temp\\server.key\"], [\"temp\\subdomain.crt\", \"temp\\subdomain.key\"]]" ^
-    --root examples\public ^
+    --server-key-pairs "[[\"temp\\server_a.crt\", \"temp\\server_a.key\"], [\"temp\\server_b.crt\", \"temp\\server_b.key\"]]" ^
+    --file-systems "[\"examples\\public\\a\", \"examples\\public\\b\"]" ^
+    --sites "{\"a.localhost\": \"examples\\public\\a\",\"b.localhost\": \"examples\\public\\b\"}" ^
     --unsafe --keylog temp\keylog
 
   exit /B 0
@@ -275,7 +278,7 @@ if %1%==temp/server.crt (
   exit /B 0
 )
 
-if %1%==temp/subdomain.crt (
+if %1%==temp/server_a.crt (
 
   if not exist "%~dp0temp" (
       mkdir %~dp0temp
@@ -298,22 +301,65 @@ if %1%==temp/subdomain.crt (
   )
 
   C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe genrsa ^
-  -out temp/subdomain.key 2048
+  -out temp/server_a.key 2048
 
   C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe req ^
   -new ^
   -config examples/conf/openssl.cnf ^
-  -key temp/subdomain.key ^
-  -subj "/C=US/O=Atlantis/OU=Atlantis Digital Service/CN=subdomain.icecubelocal" ^
-  -out temp/subdomain.csr
+  -key temp/server_a.key ^
+  -subj "/C=US/O=Atlantis/OU=Atlantis Digital Service/CN=a.localhost" ^
+  -out temp/server_a.csr
 
   C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe ca ^
   -batch ^
   -config examples/conf/openssl.cnf ^
   -extensions server_ext ^
   -notext ^
-  -in temp/subdomain.csr ^
-  -out temp/subdomain.crt
+  -in temp/server_a.csr ^
+  -out temp/server_a.crt
+
+  exit /B 0
+)
+
+if %1%==temp/server_b.crt (
+
+  if not exist "%~dp0temp" (
+      mkdir %~dp0temp
+  )
+
+  if not exist "%~dp0temp\ca.crt" (
+    .\make.bat temp/ca.crt
+  )
+
+  if not exist "%~dp0temp\ca.srl" (
+    .\make.bat temp/ca.srl
+  )
+
+  if not exist "%~dp0temp\index.txt" (
+    .\make.bat temp/index.txt
+  )
+
+  if not exist "%~dp0temp\index.txt.attr" (
+      .\make.bat temp/index.txt.attr
+  )
+
+  C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe genrsa ^
+  -out temp/server_b.key 2048
+
+  C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe req ^
+  -new ^
+  -config examples/conf/openssl.cnf ^
+  -key temp/server_b.key ^
+  -subj "/C=US/O=Atlantis/OU=Atlantis Digital Service/CN=b.localhost" ^
+  -out temp/server_b.csr
+
+  C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe ca ^
+  -batch ^
+  -config examples/conf/openssl.cnf ^
+  -extensions server_ext ^
+  -notext ^
+  -in temp/server_b.csr ^
+  -out temp/server_b.crt
 
   exit /B 0
 )
