@@ -693,9 +693,9 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 
 			var defaultServerKeyPair *tls.Certificate
 			if len(v.GetString(flagDefaultServerCert)) > 0 {
-				kp, err := tls.LoadX509KeyPair(v.GetString(flagDefaultServerCert), v.GetString(flagDefaultServerKey))
-				if err != nil {
-					return fmt.Errorf("error loading default server key pair: %w", err)
+				kp, loadX509KeyPairError := tls.LoadX509KeyPair(v.GetString(flagDefaultServerCert), v.GetString(flagDefaultServerKey))
+				if loadX509KeyPairError != nil {
+					return fmt.Errorf("error loading default server key pair: %w", loadX509KeyPairError)
 				}
 				defaultServerKeyPair = &kp
 			}

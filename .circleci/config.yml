@@ -77,6 +77,9 @@ jobs:
       # Tidy dependencies
       - run: make tidy
 
+      # Make gox
+      - run: make bin/gox
+
       # Print supported OS/Arch combinations
       - run: bin/gox -osarch-list
 
@@ -89,6 +92,7 @@ jobs:
       - store_artifacts:
           path: bin
           destination: /
+
       - persist_to_workspace:
           root: bin
           paths:

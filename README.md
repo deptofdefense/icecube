@@ -50,7 +50,7 @@ Flags:
       --tls-curve-preferences string   curve preferences (default "X25519,CurveP256,CurveP384,CurveP521")
       --tls-max-version string         maximum TLS version accepted for requests (default "1.3")
       --tls-min-version string         minimum TLS version accepted for requests (default "1.0")
-      --unsafe                         allow unsafe configuration
+      --unsafe                         allow unsafe configurationq
 ```
 
 ### Network Encryption
@@ -77,6 +77,8 @@ This project uses [direnv](https://direnv.net/) to manage environment variables 
 
 If using `macOS`, follow the `macOS` instructions below.
 
+If using `Windows`, following the `Windows` instructions below.
+
 To build a binary for development use `make bin/icecube`.  For a release call `make build_release` or call the `build-release` script directly.  Alternatively, you can always call [gox](https://github.com/mitchellh/gox) or `go build` directly.
 
 ### macOS
@@ -84,6 +86,12 @@ To build a binary for development use `make bin/icecube`.  For a release call `m
 You can install `go` on macOS using homebrew with `brew install go`.
 
 To install `direnv` on `macOS` use `brew install direnv`.  If using bash, then add `eval \"$(direnv hook bash)\"` to the `~/.bash_profile` file .  If using zsh, then add `eval \"$(direnv hook zsh)\"` to the `~/.zshrc` file.
+
+### Windows
+
+Download the latest Windows release for `go` from [https://go.dev/dl/](https://go.dev/dl/) and install it.
+
+For a `PowerShell` terminal, call the `.\env.ps1` file to update the local environment variables.
 
 ## Testing
 
