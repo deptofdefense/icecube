@@ -69,7 +69,7 @@ icecube serve \
 --behavior-not-found redirect
 ```
 
-If you wish to serve multiple sites using [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs`, `file-systems`, and `sites` command line arguments.
+If you wish to serve multiple sites using [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs`, `file-systems`, and `sites` command line arguments.  Server key pairs precedence follows their place in the array.
 
 ```shell
 icecube serve \

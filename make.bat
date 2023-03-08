@@ -158,6 +158,7 @@ if %1%==serve_example_sni (
 
     .\bin\icecube.exe serve ^
     --addr :8080 ^
+    --server-cert temp\server_a.crt --server-key temp\server_a.key ^
     --server-key-pairs "[[\"temp\\server_a.crt\", \"temp\\server_a.key\"], [\"temp\\server_b.crt\", \"temp\\server_b.key\"]]" ^
     --file-systems "[\"examples\\public\\a\", \"examples\\public\\b\"]" ^
     --sites "{\"a.localhost\": \"examples\\public\\a\",\"b.localhost\": \"examples\\public\\b\"}" ^

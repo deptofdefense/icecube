@@ -9,6 +9,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -462,13 +463,78 @@ func initCipherSuites(cipherSuiteNamesString string, supportedCipherSuites []*tl
 	return cipherSuites, nil
 }
 
-func initTLSConfig(v *viper.Viper, certificates []tls.Certificate, minVersion string, maxVersion string, cipherSuites []uint16, keyLogger io.Writer) *tls.Config {
+func getNamesForCertificate(cert x509.Certificate) []string {
+	names := []string{}
+	if cert.Subject.CommonName != "" && len(cert.DNSNames) == 0 {
+		names = append(names, cert.Subject.CommonName)
+	}
+	for _, san := range cert.DNSNames {
+		names = append(names, san)
+	}
+	return names
+}
+
+func getLeafForCertficate(cert tls.Certificate) (*x509.Certificate, error) {
+	if cert.Leaf != nil {
+		return cert.Leaf, nil
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("error parsing leaf certificate for certificate: %w", err)
+	}
+	return leaf, nil
+}
+
+func buildNameToCertificate(defaultCertificate *tls.Certificate, certificates []tls.Certificate) (map[string]*tls.Certificate, error) {
+	// copied from crypto/tls/common.go in the Go Standard Library
+	nameToCertificate := map[string]*tls.Certificate{}
+	// Append default certificate to end of certificates
+	if defaultCertificate != nil {
+		certificates = append([]tls.Certificate{*defaultCertificate}, certificates...)
+	}
+	for i, _ := range certificates {
+		c := certificates[len(certificates)-1-i]
+		leaf, err := getLeafForCertficate(c)
+		if err != nil {
+			return nil, fmt.Errorf("error getting leaf for certificate %d: %w", i, err)
+		}
+		names := getNamesForCertificate(*leaf)
+		for _, name := range names {
+			nameToCertificate[name] = &c
+		}
+	}
+	return nameToCertificate, nil
+}
+
+func initTLSConfig(v *viper.Viper, defaultCertificate *tls.Certificate, certificates []tls.Certificate, minVersion string, maxVersion string, cipherSuites []uint16, keyLogger io.Writer) (*tls.Config, error) {
 
 	config := &tls.Config{
-		Certificates: certificates,
 		MinVersion:   TLSVersionIdentifiers[minVersion],
 		MaxVersion:   TLSVersionIdentifiers[maxVersion],
 		KeyLogWriter: keyLogger,
+	}
+	if len(certificates) > 0 {
+		nameToCertificate, err := buildNameToCertificate(defaultCertificate, certificates)
+		if err != nil {
+			return nil, fmt.Errorf("error building name to certificate map: %w", err)
+		}
+		config.GetCertificate = func(clientHelloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if len(clientHelloInfo.ServerName) == 0 {
+				if defaultCertificate != nil {
+					return defaultCertificate, nil
+				}
+				return &certificates[0], nil
+			}
+			if c, ok := nameToCertificate[clientHelloInfo.ServerName]; ok {
+				return c, nil
+			}
+			if defaultCertificate != nil {
+				return defaultCertificate, nil
+			}
+			return &certificates[0], nil
+		}
+	} else {
+		config.Certificates = []tls.Certificate{*defaultCertificate}
 	}
 
 	if len(cipherSuites) > 0 {
@@ -482,7 +548,7 @@ func initTLSConfig(v *viper.Viper, certificates []tls.Certificate, minVersion st
 		}
 		config.CurvePreferences = curvePreferences
 	}
-	return config
+	return config, nil
 }
 
 func initFileSystem(rootPath string, s3Client *s3.S3) fs.FileSystem {
@@ -726,7 +792,10 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 				return fmt.Errorf("error initializing cipher suites: %w", err)
 			}
 
-			tlsConfig := initTLSConfig(v, serverKeyPairs, tlsMinVersion, tlsMaxVersion, cipherSuites, keyLogger)
+			tlsConfig, err := initTLSConfig(v, defaultServerKeyPair, serverKeyPairs, tlsMinVersion, tlsMaxVersion, cipherSuites, keyLogger)
+			if err != nil {
+				return fmt.Errorf("error initializing TLS config: %w", err)
+			}
 
 			redirectNotFound := v.GetString(flagBehaviorNotFound) == BehaviorRedirect
 
