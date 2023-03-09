@@ -8,6 +8,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -19,10 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	awssession "github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofrs/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -31,6 +32,7 @@ import (
 	"github.com/deptofdefense/icecube/pkg/fs"
 	"github.com/deptofdefense/icecube/pkg/log"
 	"github.com/deptofdefense/icecube/pkg/server"
+	"github.com/deptofdefense/icecube/pkg/template"
 )
 
 const (
@@ -163,6 +165,7 @@ const (
 	flagBehaviorNotFound = "behavior-not-found"
 	//
 	flagDirectoryIndex         = "directory-index"
+	flagDirectoryTemplate      = "directory-template"
 	flagDirectoryTrailingSlash = "directory-trailing-slash"
 	//
 	flagLogPath    = "log"
@@ -171,12 +174,16 @@ const (
 	flagUnsafe = "unsafe"
 	flagDryRun = "dry-run"
 	//
-	flagAWSProfile         = "aws-profile"
-	flagAWSDefaultRegion   = "aws-default-region"
-	flagAWSRegion          = "aws-region"
-	flagAWSAccessKeyID     = "aws-access-key-id"
-	flagAWSSecretAccessKey = "aws-secret-access-key"
-	flagAWSSessionToken    = "aws-session-token"
+	flagAWSPartition          = "aws-partition"
+	flagAWSProfile            = "aws-profile"
+	flagAWSDefaultRegion      = "aws-default-region"
+	flagAWSRegion             = "aws-region"
+	flagAWSAccessKeyID        = "aws-access-key-id"
+	flagAWSSecretAccessKey    = "aws-secret-access-key"
+	flagAWSSessionToken       = "aws-session-token"
+	flagAWSInsecureSkipVerify = "aws-insecure-skip-verify"
+	flagAWSS3Endpoint         = "aws-s3-endpoint"
+	flagAWSS3UsePathStyle     = "aws-s3-use-path-style"
 )
 
 type File struct {
@@ -198,7 +205,8 @@ func initServeFlags(flag *pflag.FlagSet) {
 	flag.String(flagSites, "", "sites hosted by the server in the format of a json map of server name to file system")
 	flag.StringP(flagLogPath, "l", "-", "path to the log output.  Defaults to stdout.")
 	flag.String(flagKeyLogPath, "", "path to the key log output.  Also requires unsafe flag.")
-	flag.String(flagDirectoryIndex, "index.html", "index file for directories")
+	flag.String(flagDirectoryIndex, "", "index file for directories")
+	flag.String(flagDirectoryTemplate, "", "path to directory template")
 	flag.Bool(flagDirectoryTrailingSlash, false, "append trailing slash to directories")
 	flag.String(flagBehaviorNotFound, BehaviorNone, "default behavior when a file is not found.  One of: "+strings.Join(NotFoundBehaviors, ","))
 	initTimeoutFlags(flag)
@@ -222,12 +230,16 @@ func initTLSFlags(flag *pflag.FlagSet) {
 }
 
 func initAWSFlags(flag *pflag.FlagSet) {
+	flag.String(flagAWSPartition, "", "AWS Partition")
 	flag.String(flagAWSProfile, "", "AWS Profile")
 	flag.String(flagAWSDefaultRegion, "", "AWS Default Region")
-	flag.StringP(flagAWSRegion, "", "", "AWS Region (overrides default region)")
-	flag.StringP(flagAWSAccessKeyID, "", "", "AWS Access Key ID")
-	flag.StringP(flagAWSSecretAccessKey, "", "", "AWS Secret Access Key")
-	flag.StringP(flagAWSSessionToken, "", "", "AWS Session Token")
+	flag.String(flagAWSRegion, "", "AWS Region (overrides default region)")
+	flag.String(flagAWSAccessKeyID, "", "AWS Access Key ID")
+	flag.String(flagAWSSecretAccessKey, "", "AWS Secret Access Key")
+	flag.String(flagAWSSessionToken, "", "AWS Session Token")
+	flag.Bool(flagAWSInsecureSkipVerify, false, "Skip verification of AWS TLS certificate")
+	flag.String(flagAWSS3Endpoint, "", "AWS S3 Endpoint URL")
+	flag.Bool(flagAWSS3UsePathStyle, false, "Use path-style addressing (default is to use virtual-host-style addressing)")
 }
 
 func initViper(cmd *cobra.Command) (*viper.Viper, error) {
@@ -241,10 +253,11 @@ func initViper(cmd *cobra.Command) (*viper.Viper, error) {
 	return v, nil
 }
 
-func initS3Client(v *viper.Viper) (*s3.S3, *awssession.Session, error) {
+func initS3Client(v *viper.Viper) *s3.Client {
 	accessKeyID := v.GetString(flagAWSAccessKeyID)
 	secretAccessKey := v.GetString(flagAWSSecretAccessKey)
 	sessionToken := v.GetString(flagAWSSessionToken)
+	usePathStyle := v.GetBool(flagAWSS3UsePathStyle)
 
 	region := v.GetString(flagAWSRegion)
 	if len(region) == 0 {
@@ -254,24 +267,50 @@ func initS3Client(v *viper.Viper) (*s3.S3, *awssession.Session, error) {
 	}
 
 	config := aws.Config{
-		MaxRetries: aws.Int(3),
-		Region:     aws.String(region),
+		RetryMaxAttempts: 3,
+		Region:           region,
+	}
+
+	partition := v.GetString(flagAWSPartition)
+	if len(partition) == 0 {
+		partition = "aws"
+	}
+
+	if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
+		config.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service string, region string, options ...interface{}) (aws.Endpoint, error) {
+			if service == s3.ServiceID {
+				endpoint := aws.Endpoint{
+					PartitionID:   partition,
+					URL:           e,
+					SigningRegion: region,
+				}
+				return endpoint, nil
+			}
+			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+		})
 	}
 
 	if len(accessKeyID) > 0 && len(secretAccessKey) > 0 {
-		config.Credentials = credentials.NewStaticCredentials(
+		config.Credentials = credentials.NewStaticCredentialsProvider(
 			accessKeyID,
 			secretAccessKey,
 			sessionToken)
 	}
 
-	session, err := awssession.NewSessionWithOptions(awssession.Options{
-		Config: config,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("error creating new AWS session: %w", err)
+	insecureSkipVerify := v.GetBool(flagAWSInsecureSkipVerify)
+	if insecureSkipVerify {
+		config.HTTPClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		}
 	}
-	return s3.New(session), session, nil
+
+	return s3.NewFromConfig(config, func(o *s3.Options) {
+		o.UsePathStyle = usePathStyle
+	})
 }
 
 func checkConfig(v *viper.Viper) error {
@@ -551,17 +590,17 @@ func initTLSConfig(v *viper.Viper, defaultCertificate *tls.Certificate, certific
 	return config, nil
 }
 
-func initFileSystem(rootPath string, s3Client *s3.S3) fs.FileSystem {
+func initFileSystem(ctx context.Context, rootPath string, s3Client *s3.Client) fs.FileSystem {
 	if strings.HasPrefix(rootPath, "s3://") {
 		rootParts := strings.Split(rootPath[len("s3://"):], "/")
 		bucket := rootParts[0]
 		prefix := strings.Join(rootParts[1:], "/")
 		bucketCreationDate := time.Now()
-		listBucketsOutput, err := s3Client.ListBuckets(&s3.ListBucketsInput{})
+		listBucketsOutput, err := s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
 		if err == nil {
 			for _, b := range listBucketsOutput.Buckets {
-				if bucket == aws.StringValue(b.Name) {
-					bucketCreationDate = aws.TimeValue(b.CreationDate)
+				if bucket == aws.ToString(b.Name) {
+					bucketCreationDate = aws.ToTime(b.CreationDate)
 					break
 				}
 			}
@@ -572,7 +611,7 @@ func initFileSystem(rootPath string, s3Client *s3.S3) fs.FileSystem {
 	return fs.NewLocalFileSystem(rootPath)
 }
 
-func initFileSystems(v *viper.Viper) (map[string]fs.FileSystem, error) {
+func initFileSystems(ctx context.Context, v *viper.Viper) (map[string]fs.FileSystem, error) {
 	rootPath := v.GetString(flagRootPath)
 	fileSystemPathsString := v.GetString(flagFileSystems)
 	fileSystemPathsSlice := []string{}
@@ -595,25 +634,21 @@ func initFileSystems(v *viper.Viper) (map[string]fs.FileSystem, error) {
 		}
 	}
 
-	var s3Client *s3.S3
+	var s3Client *s3.Client
 
 	if s3ClientNeeded {
-		client, _, err := initS3Client(v)
-		if err != nil {
-			return nil, fmt.Errorf("error initializing s3 file system: %w", err)
-		}
-		s3Client = client
+		s3Client = initS3Client(v)
 	}
 
 	fileSystems := map[string]fs.FileSystem{}
 
 	if len(rootPath) > 0 {
-		fileSystems[rootPath] = initFileSystem(rootPath, s3Client)
+		fileSystems[rootPath] = initFileSystem(ctx, rootPath, s3Client)
 	}
 
 	if len(fileSystemPathsSlice) > 0 {
 		for _, fileSystemPath := range fileSystemPathsSlice {
-			fileSystems[fileSystemPath] = initFileSystem(fileSystemPath, s3Client)
+			fileSystems[fileSystemPath] = initFileSystem(ctx, fileSystemPath, s3Client)
 		}
 	}
 
@@ -703,6 +738,8 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 
+			ctx := cmd.Context()
+
 			v, err := initViper(cmd)
 			if err != nil {
 				return fmt.Errorf("error initializing viper: %w", err)
@@ -747,7 +784,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 
 			defaultRootPath := v.GetString(flagRootPath)
 
-			fileSystems, err := initFileSystems(v)
+			fileSystems, err := initFileSystems(ctx, v)
 			if err != nil {
 				return fmt.Errorf("error initializing file systems: %w", err)
 			}
@@ -800,7 +837,20 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 			redirectNotFound := v.GetString(flagBehaviorNotFound) == BehaviorRedirect
 
 			directoryIndex := v.GetString(flagDirectoryIndex)
+			directoryTemplatePath := v.GetString(flagDirectoryTemplate)
 			directoryTrailingSlash := v.GetBool(flagDirectoryTrailingSlash)
+
+			var directoryTemplate template.Template
+			if len(directoryTemplatePath) > 0 {
+				t, err := template.ParseFile("index.html", directoryTemplatePath)
+				if err != nil {
+					return fmt.Errorf("error parsing directory template: %w", err)
+				}
+				directoryTemplate = t
+				_ = logger.Log("Using directory template", map[string]interface{}{
+					"path": directoryTemplatePath,
+				})
+			}
 
 			httpsServer := &http.Server{
 				Addr:         listenAddress,
@@ -813,6 +863,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 					//
 					icecubeTraceID := newTraceID()
 					tlsServerName := r.TLS.ServerName
+					requestContext := r.Context()
 					//
 					_ = logger.Log("Request", map[string]interface{}{
 						"url":              r.URL.String(),
@@ -859,9 +910,9 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 						return
 					}
 
-					fi, err := fs.Stat(trimmedPath)
+					fi, err := fs.Stat(requestContext, trimmedPath)
 					if err != nil {
-						if os.IsNotExist(err) {
+						if fs.IsNotExist(err) {
 							_ = logger.Log("Not found", map[string]interface{}{
 								"path":             trimmedPath,
 								"icecube_trace_id": icecubeTraceID,
@@ -889,13 +940,51 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 							}
 						}
 						if len(directoryIndex) == 0 {
-							// if no directory index is to be checked, then return not found
-							http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+							if directoryTemplate == nil {
+								// if no directory index or directory template is to be checked, then return not found
+								http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+								return
+							}
+							directoryEntries, readDirError := fs.ReadDir(requestContext, fi.Name())
+							if readDirError != nil {
+								_ = logger.Log("Error reading directory", map[string]interface{}{
+									"path":             trimmedPath,
+									"icecube_trace_id": icecubeTraceID,
+									"error":            err.Error(),
+								})
+								http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+								return
+							}
+							buf := bytes.NewBuffer([]byte{})
+							// Render Directory Template
+							executeError := directoryTemplate.Execute(buf, map[string]interface{}{
+								"Name":             trimmedPath,
+								"DirectoryEntries": directoryEntries,
+							})
+							if executeError != nil {
+								_ = logger.Log("Error rendering directory template", map[string]interface{}{
+									"path":             trimmedPath,
+									"icecube_trace_id": icecubeTraceID,
+									"error":            err.Error(),
+								})
+								http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+								return
+							}
+							// Serve Rendered Directory Template
+							server.ServeContent(w, r, trimmedPath, bytes.NewReader(buf.Bytes()), fi.ModTime(), false, nil)
 							return
 						}
-						indexPath := fs.Join(trimmedPath, directoryIndex)
-						indexFileInfo, err := fs.Stat(indexPath)
-						if err != nil && !os.IsNotExist(err) {
+
+						indexPath := ""
+						// if directory index starts with / then look for it in the root directory of the server.
+						if strings.HasPrefix(directoryIndex, "/") {
+							indexPath = directoryIndex
+						} else {
+							indexPath = fs.Join(trimmedPath, directoryIndex)
+						}
+
+						indexFileInfo, err := fs.Stat(requestContext, indexPath)
+						if err != nil && !fs.IsNotExist(err) {
 							_ = logger.Log("Error stating index file", map[string]interface{}{
 								"path":             indexPath,
 								"icecube_trace_id": icecubeTraceID,
@@ -903,7 +992,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 							http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 							return
 						}
-						if os.IsNotExist(err) || indexFileInfo.IsDir() {
+						if fs.IsNotExist(err) || indexFileInfo.IsDir() {
 							// if index file does not exist or is a directory then return not found.
 							http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 							return

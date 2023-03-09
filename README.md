@@ -66,7 +66,8 @@ icecube serve \
 --server-cert temp/server.crt \
 --server-key temp/server.key \
 --root examples/public \
---behavior-not-found redirect
+--behavior-not-found redirect \
+--directory-index index.html
 ```
 
 If you wish to serve multiple sites using [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs`, `file-systems`, and `sites` command line arguments.  Server key pairs precedence follows their place in the array.

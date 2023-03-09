@@ -8,21 +8,37 @@
 package fs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type S3FileSystem struct {
 	bucket             string
 	prefix             string
-	s3                 *s3.S3
+	s3                 *s3.Client
 	bucketCreationDate time.Time
+}
+
+type S3DirectoryEntry struct {
+	name string
+	dir  bool
+}
+
+func (de *S3DirectoryEntry) IsDir() bool {
+	return de.dir
+}
+
+func (de *S3DirectoryEntry) Name() string {
+	return de.name
 }
 
 func (fs *S3FileSystem) key(name string) string {
@@ -35,13 +51,65 @@ func (fs *S3FileSystem) key(name string) string {
 	return fs.Join(fs.prefix, name)
 }
 
+func (fs *S3FileSystem) HeadObject(ctx context.Context, name string) (*FileInfo, error) {
+	headObjectOutput, err := fs.s3.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(fs.bucket),
+		Key:    aws.String(fs.key(name)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	fi := NewFileInfo(
+		name,
+		aws.ToTime(headObjectOutput.LastModified),
+		headObjectOutput.ContentLength == int64(0),
+		headObjectOutput.ContentLength,
+	)
+	return fi, nil
+}
+
+func (fs *S3FileSystem) IsNotExist(err error) bool {
+	var responseError *http.ResponseError
+	if errors.As(err, &responseError) {
+		if responseError.HTTPStatusCode() == 404 {
+			return true
+		}
+	}
+	return false
+}
+
 func (fs *S3FileSystem) Join(name ...string) string {
 	return path.Join(name...)
 }
 
-func (fs *S3FileSystem) Stat(name string) (*FileInfo, error) {
+func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEntry, error) {
+	listObjectsV2Input := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(fs.bucket),
+		Delimiter: aws.String("/"),
+		MaxKeys:   25,
+	}
+	if name != "/" {
+		listObjectsV2Input.Prefix = aws.String(fs.key(name) + "/")
+	} else {
+		listObjectsV2Input.Prefix = aws.String("")
+	}
+	listObjectsV2Output, err := fs.s3.ListObjectsV2(ctx, listObjectsV2Input)
+	if err != nil {
+		return nil, err
+	}
+	directoryEntries := []DirectoryEntry{}
+	for _, commonPrefix := range listObjectsV2Output.CommonPrefixes {
+		directoryEntries = append(directoryEntries, &S3DirectoryEntry{name: aws.ToString(commonPrefix.Prefix), dir: true})
+	}
+	for _, object := range listObjectsV2Output.Contents {
+		directoryEntries = append(directoryEntries, &S3DirectoryEntry{name: aws.ToString(object.Key), dir: (object.Size == 0)})
+	}
+	return directoryEntries, nil
+}
+
+func (fs *S3FileSystem) Stat(ctx context.Context, name string) (*FileInfo, error) {
 	if name == "/" {
-		_, err := fs.s3.HeadBucket(&s3.HeadBucketInput{
+		_, err := fs.s3.HeadBucket(ctx, &s3.HeadBucketInput{
 			Bucket: aws.String(fs.bucket),
 		})
 		if err != nil {
@@ -55,24 +123,27 @@ func (fs *S3FileSystem) Stat(name string) (*FileInfo, error) {
 		)
 		return fi, nil
 	}
-	headObjectOutput, err := fs.s3.HeadObject(&s3.HeadObjectInput{
-		Bucket: aws.String(fs.bucket),
-		Key:    aws.String(fs.key(name)),
-	})
+
+	directoryEntries, err := fs.ReadDir(ctx, name)
+	if len(directoryEntries) > 0 {
+		fi := NewFileInfo(
+			name,
+			fs.bucketCreationDate,
+			true,
+			int64(0),
+		)
+		return fi, nil
+	}
+
+	fi, err := fs.HeadObject(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	fi := NewFileInfo(
-		name,
-		aws.TimeValue(headObjectOutput.LastModified),
-		aws.Int64Value(headObjectOutput.ContentLength) == int64(0),
-		aws.Int64Value(headObjectOutput.ContentLength),
-	)
 	return fi, nil
 }
 
-func (fs *S3FileSystem) Open(name string) (io.ReadSeeker, error) {
-	fi, err := fs.Stat(name)
+func (fs *S3FileSystem) Open(ctx context.Context, name string) (io.ReadSeeker, error) {
+	fi, err := fs.Stat(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +151,7 @@ func (fs *S3FileSystem) Open(name string) (io.ReadSeeker, error) {
 		0,
 		fi.Size(),
 		func(offset int64, p []byte) (int, error) {
-			getObjectOutput, err := fs.s3.GetObject(&s3.GetObjectInput{
+			getObjectOutput, err := fs.s3.GetObject(ctx, &s3.GetObjectInput{
 				Bucket: aws.String(fs.bucket),
 				Key:    aws.String(fs.key(name)),
 				Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, int(offset)+len(p)-1)),
@@ -99,7 +170,7 @@ func (fs *S3FileSystem) Open(name string) (io.ReadSeeker, error) {
 	return rs, nil
 }
 
-func NewS3FileSystem(bucket string, prefix string, s3 *s3.S3, bucketCreationDate time.Time) *S3FileSystem {
+func NewS3FileSystem(bucket string, prefix string, s3 *s3.Client, bucketCreationDate time.Time) *S3FileSystem {
 	return &S3FileSystem{
 		bucket:             bucket,
 		prefix:             prefix,

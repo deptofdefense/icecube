@@ -18,7 +18,7 @@ import (
 )
 
 func ServeFile(w http.ResponseWriter, r *http.Request, fs fs.FileSystem, p string, modtime time.Time, download bool, errorHandler func(w http.ResponseWriter, r *http.Request, err error) error) {
-	f, err := fs.Open(p)
+	f, err := fs.Open(r.Context(), p)
 	if err != nil {
 		if errorHandler != nil {
 			err = errorHandler(w, r, err)
