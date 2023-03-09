@@ -1,19 +1,28 @@
 <html>
-    <head><title>Index of {{ .Name }}</title></head>
+    <head>
+        <title>Icecube - Index of {{ .Name }}</title>
+        <style>tr {font-size: 14px; line-height: 18px;}</style>
+    </head>
     <body>
         <h3>Index of {{ .Name }}</h3>
         <hr>
         <table>
             <tr>
                 <th>Name</th>
+                <th>Last Modified</th>
+                <th>Size</th>
             </tr>
             <tr><td><a href="..">../</a></td></tr>
             {{ range .DirectoryEntries }}
             <tr>
                 {{ if .IsDir }}
                     <td><a href="/{{ .Name }}">{{ .Name }}</a></td>
+                    <td>-</td>
+                    <td>-</td>
                 {{ else }}
                     <td><a href="/{{ .Name }}">{{ .Name }}</a></td>
+                    <td>{{ .ModTime }}</td>
+                    <td>{{ .Size }}</td>
                 {{ end }}
             </tr>
             {{ end }}

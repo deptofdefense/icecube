@@ -10,8 +10,10 @@ package fs
 import (
 	"context"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/afero"
 )
@@ -19,6 +21,32 @@ import (
 type LocalFileSystem struct {
 	fs   afero.Fs
 	iofs afero.IOFS
+}
+
+type LocalDirectoryEntry struct {
+	de fs.DirEntry
+}
+
+func (de *LocalDirectoryEntry) IsDir() bool {
+	return de.de.IsDir()
+}
+
+func (de *LocalDirectoryEntry) Name() string {
+	return de.de.Name()
+}
+
+func (de *LocalDirectoryEntry) ModTime() time.Time {
+	if i, err := de.de.Info(); err == nil {
+		return i.ModTime()
+	}
+	return time.Time{}
+}
+
+func (de *LocalDirectoryEntry) Size() int64 {
+	if i, err := de.de.Info(); err == nil {
+		return i.Size()
+	}
+	return -1
 }
 
 func (fs *LocalFileSystem) IsNotExist(err error) bool {
@@ -36,7 +64,9 @@ func (fs *LocalFileSystem) ReadDir(ctx context.Context, name string) ([]Director
 		return nil, err
 	}
 	for _, directoryEntry := range readDirOutput {
-		directoryEntries = append(directoryEntries, directoryEntry)
+		directoryEntries = append(directoryEntries, &LocalDirectoryEntry{
+			de: directoryEntry,
+		})
 	}
 	return directoryEntries, nil
 }

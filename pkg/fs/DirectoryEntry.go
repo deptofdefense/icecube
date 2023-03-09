@@ -7,7 +7,10 @@
 
 package fs
 
+import "time"
+
 type DirectoryEntry interface {
 	Name() string
 	IsDir() bool
+	ModTime() time.Time
 }

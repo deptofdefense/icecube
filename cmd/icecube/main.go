@@ -168,6 +168,8 @@ const (
 	flagDirectoryTemplate      = "directory-template"
 	flagDirectoryTrailingSlash = "directory-trailing-slash"
 	//
+	flagMaxDirectoryEntries = "max-directory-entries"
+	//
 	flagLogPath    = "log"
 	flagKeyLogPath = "keylog"
 	//
@@ -208,6 +210,7 @@ func initServeFlags(flag *pflag.FlagSet) {
 	flag.String(flagDirectoryIndex, "", "index file for directories")
 	flag.String(flagDirectoryTemplate, "", "path to directory template")
 	flag.Bool(flagDirectoryTrailingSlash, false, "append trailing slash to directories")
+	flag.Int(flagMaxDirectoryEntries, -1, "maximum directory entries returned")
 	flag.String(flagBehaviorNotFound, BehaviorNone, "default behavior when a file is not found.  One of: "+strings.Join(NotFoundBehaviors, ","))
 	initTimeoutFlags(flag)
 	initTLSFlags(flag)
@@ -590,7 +593,7 @@ func initTLSConfig(v *viper.Viper, defaultCertificate *tls.Certificate, certific
 	return config, nil
 }
 
-func initFileSystem(ctx context.Context, rootPath string, s3Client *s3.Client) fs.FileSystem {
+func initFileSystem(ctx context.Context, rootPath string, s3Client *s3.Client, maxDirectoryEntries int) fs.FileSystem {
 	if strings.HasPrefix(rootPath, "s3://") {
 		rootParts := strings.Split(rootPath[len("s3://"):], "/")
 		bucket := rootParts[0]
@@ -605,13 +608,13 @@ func initFileSystem(ctx context.Context, rootPath string, s3Client *s3.Client) f
 				}
 			}
 		}
-		return fs.NewS3FileSystem(bucket, prefix, s3Client, bucketCreationDate)
+		return fs.NewS3FileSystem(bucket, prefix, s3Client, bucketCreationDate, maxDirectoryEntries)
 	}
 
 	return fs.NewLocalFileSystem(rootPath)
 }
 
-func initFileSystems(ctx context.Context, v *viper.Viper) (map[string]fs.FileSystem, error) {
+func initFileSystems(ctx context.Context, v *viper.Viper, maxDirectoryEntries int) (map[string]fs.FileSystem, error) {
 	rootPath := v.GetString(flagRootPath)
 	fileSystemPathsString := v.GetString(flagFileSystems)
 	fileSystemPathsSlice := []string{}
@@ -643,12 +646,12 @@ func initFileSystems(ctx context.Context, v *viper.Viper) (map[string]fs.FileSys
 	fileSystems := map[string]fs.FileSystem{}
 
 	if len(rootPath) > 0 {
-		fileSystems[rootPath] = initFileSystem(ctx, rootPath, s3Client)
+		fileSystems[rootPath] = initFileSystem(ctx, rootPath, s3Client, maxDirectoryEntries)
 	}
 
 	if len(fileSystemPathsSlice) > 0 {
 		for _, fileSystemPath := range fileSystemPathsSlice {
-			fileSystems[fileSystemPath] = initFileSystem(ctx, fileSystemPath, s3Client)
+			fileSystems[fileSystemPath] = initFileSystem(ctx, fileSystemPath, s3Client, maxDirectoryEntries)
 		}
 	}
 
@@ -784,7 +787,8 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 
 			defaultRootPath := v.GetString(flagRootPath)
 
-			fileSystems, err := initFileSystems(ctx, v)
+			maxDirectoryEntries := v.GetInt(flagMaxDirectoryEntries)
+			fileSystems, err := initFileSystems(ctx, v, maxDirectoryEntries)
 			if err != nil {
 				return fmt.Errorf("error initializing file systems: %w", err)
 			}
