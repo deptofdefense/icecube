@@ -976,7 +976,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 								_ = logger.Log("Error reading directory", map[string]interface{}{
 									"path":             trimmedPath,
 									"icecube_trace_id": icecubeTraceID,
-									"error":            err.Error(),
+									"error":            readDirError.Error(),
 								})
 								http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 								return
