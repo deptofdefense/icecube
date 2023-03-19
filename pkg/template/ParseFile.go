@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/ioutil"
+	"time"
 )
 
 func ParseFile(name string, path string) (Template, error) {
@@ -18,7 +19,15 @@ func ParseFile(name string, path string) (Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading template from %q: %w", path, err)
 	}
-	t, err := template.New(name).Parse(string(data))
+	funcMap := template.FuncMap{
+		"sumIntegers": func(x, y int) int {
+			return x + y
+		},
+		"formatTime": func(t time.Time, f string) string {
+			return t.Format(f)
+		},
+	}
+	t, err := template.New(name).Funcs(funcMap).Parse(string(data))
 	if err != nil {
 		return nil, fmt.Errorf("error parsing template from %q: %w", path, err)
 	}

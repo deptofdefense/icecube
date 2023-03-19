@@ -1,31 +1,51 @@
 <html>
     <head>
         <title>icecube - Index of {{ .Name }}</title>
-        <style>tr {font-size: 14px; line-height: 18px;}</style>
+        <style>
+          tr th, tr td{
+            font-size: 14px;
+            line-height: 18px;
+            text-align: left;
+          }
+          tr th.id, tr td.id {
+            width: 20px;
+          }
+          tr th.name, tr td.name {
+            width: 300px;
+          }
+          tr th.modtime, tr td.modtime {
+            width: 200px;
+          }
+        </style>
     </head>
     <body>
-        <h1>Provided by the icecube file server <a src="https://github.com/deptofdefense/icecube">https://github.com/deptofdefense/icecube</a></h1>
+        <a href="https://github.com/deptofdefense/icecube"><h5>Powered by icecube (version {{ .IcecubeVersion }})</h5></a>
         <h3>Index of {{ .Name }}</h3>
         <hr>
         <table>
             <tr>
-                <th>#</th>
-                <th>Name</th>
-                <th>Last Modified</th>
-                <th>Size</th>
+                <th class="id">#</th>
+                <th class="name">Name</th>
+                <th class="modtime">Last Modified</th>
+                <th class="size">Size (bytes)</th>
             </tr>
-            <tr><td><a href="..">../</a></td></tr>
+            <tr>
+              <td class="id">-</td>
+              <td class="name"><a href="..">../</a></td>
+              <td class="modtime">-</td>
+              <td class="size">-</td>
+            </tr>
             {{ range $i, $de := .DirectoryEntries }}
             <tr>
-                <td>{{ $i }}</td>
+                <td class="id">{{ $i | sumIntegers 1 }}</td>
                 {{ if .IsDir }}
-                    <td><a href="/{{ $de.Name }}">{{ $de.Name }}</a></td>
-                    <td>-</td>
-                    <td>-</td>
+                    <td class="name"><a href="/{{ $de.Name }}">{{ $de.Name }}</a></td>
+                    <td class="modtime">-</td>
+                    <td class="size">-</td>
                 {{ else }}
-                    <td><a href="/{{ $de.Name }}">{{ $de.Name }}</a></td>
-                    <td>{{ .ModTime }}</td>
-                    <td>{{ .Size }}</td>
+                    <td class="name"><a href="/{{ $de.Name }}">{{ $de.Name }}</a></td>
+                    <td class="modtime">{{ formatTime .ModTime "02-Jan-2006 15:04" }}</td>
+                    <td class="size">{{ .Size }}</td>
                 {{ end }}
             </tr>
             {{ end }}

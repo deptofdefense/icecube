@@ -971,8 +971,16 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 								http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 								return
 							}
-							directoryEntries, readDirError := fs.ReadDir(requestContext, fi.Name())
+							directoryEntries, readDirError := fs.ReadDir(requestContext, trimmedPath)
 							if readDirError != nil {
+								if fs.IsNotExist(readDirError) && trimmedPath == "/" {
+									_ = logger.Log("Root directory not found", map[string]interface{}{
+										"path":             trimmedPath,
+										"icecube_trace_id": icecubeTraceID,
+									})
+									http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+									return
+								}
 								_ = logger.Log("Error reading directory", map[string]interface{}{
 									"path":             trimmedPath,
 									"icecube_trace_id": icecubeTraceID,
@@ -991,12 +999,13 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 							executeError := directoryTemplate.Execute(buf, map[string]interface{}{
 								"Name":             trimmedPath,
 								"DirectoryEntries": directoryEntries,
+								"IcecubeVersion":   IcecubeVersion,
 							})
 							if executeError != nil {
 								_ = logger.Log("Error rendering directory template", map[string]interface{}{
 									"path":             trimmedPath,
 									"icecube_trace_id": icecubeTraceID,
-									"error":            err.Error(),
+									"error":            executeError.Error(),
 								})
 								http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 								return
