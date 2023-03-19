@@ -379,7 +379,7 @@ func checkConfig(v *viper.Viper) error {
 	}
 	_, err := strconv.ParseUint(logPerm, 8, 32)
 	if err != nil {
-		return nil, fmt.Errorf("invalid format for log perm: %s", perm)
+		return fmt.Errorf("invalid format for log perm: %s", logPerm)
 	}
 	timeoutRead := v.GetString(flagTimeoutRead)
 	if len(timeoutRead) == 0 {
