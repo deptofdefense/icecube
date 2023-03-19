@@ -18,7 +18,9 @@ fmt:  ## Format Go source code
 
 .PHONY: imports
 imports: bin/goimports ## Update imports in Go source code
-	bin/goimports -w -local github.com/deptofdefense/icecube,github.com/deptofdefense $$(find . -iname '*.go')
+	bin/goimports -w \
+	-local github.com/deptofdefense/icecube,github.com/deptofdefense \
+	$$(find . -iname '*.go')
 
 vet: ## Vet Go source code
 	go vet github.com/deptofdefense/icecube/pkg/... # vet packages
@@ -83,6 +85,7 @@ serve_example: bin/icecube temp/ca.crt temp/server.crt   ## Serve using local bi
 	--server-cert temp/server.crt \
 	--server-key temp/server.key \
 	--root examples/public \
+	--log temp/server.log --log-perm 644 \
 	--unsafe --keylog temp/keylog
 
 #

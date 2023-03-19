@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/deptofdefense/icecube/pkg/fs"
 	"github.com/deptofdefense/icecube/pkg/log"
 	"github.com/deptofdefense/icecube/pkg/server"
@@ -171,6 +173,7 @@ const (
 	flagMaxDirectoryEntries = "max-directory-entries"
 	//
 	flagLogPath    = "log"
+	flagLogPerm    = "log-perm"
 	flagKeyLogPath = "keylog"
 	//
 	flagUnsafe = "unsafe"
@@ -206,6 +209,7 @@ func initServeFlags(flag *pflag.FlagSet) {
 	flag.String(flagFileSystems, "", "additional file systems in the format of a json array of strings")
 	flag.String(flagSites, "", "sites hosted by the server in the format of a json map of server name to file system")
 	flag.StringP(flagLogPath, "l", "-", "path to the log output.  Defaults to stdout.")
+	flag.String(flagLogPerm, "0600", "file permissions for log output file as unix file mode.")
 	flag.String(flagKeyLogPath, "", "path to the key log output.  Also requires unsafe flag.")
 	flag.String(flagDirectoryIndex, "", "index file for directories")
 	flag.String(flagDirectoryTemplate, "", "path to directory template")
@@ -369,6 +373,14 @@ func checkConfig(v *viper.Viper) error {
 	if len(logPath) == 0 {
 		return fmt.Errorf("log path is missing")
 	}
+	logPerm := v.GetString(flagLogPerm)
+	if len(logPerm) == 0 {
+		return fmt.Errorf("log perm is missing")
+	}
+	_, err := strconv.ParseUint(logPerm, 8, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid format for log perm: %s", perm)
+	}
 	timeoutRead := v.GetString(flagTimeoutRead)
 	if len(timeoutRead) == 0 {
 		return fmt.Errorf("read timeout is missing")
@@ -443,13 +455,23 @@ func newTraceID() string {
 	return traceID.String()
 }
 
-func initLogger(path string) (*log.SimpleLogger, error) {
+func initLogger(path string, perm string) (*log.SimpleLogger, error) {
 
 	if path == "-" {
 		return log.NewSimpleLogger(os.Stdout), nil
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	fileMode := os.FileMode(0600)
+
+	if len(perm) > 0 {
+		fm, err := strconv.ParseUint(perm, 8, 32)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing file permissions for log file from %q", perm)
+		}
+		fileMode = os.FileMode(fm)
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, fileMode)
 	if err != nil {
 		return nil, fmt.Errorf("error opening log file %q: %w", path, err)
 	}
@@ -756,7 +778,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 				return errConfig
 			}
 
-			logger, err := initLogger(v.GetString(flagLogPath))
+			logger, err := initLogger(v.GetString(flagLogPath), v.GetString(flagLogPerm))
 			if err != nil {
 				return fmt.Errorf("error initializing logger: %w", err)
 			}
