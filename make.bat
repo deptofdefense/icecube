@@ -93,7 +93,15 @@ if %1%==imports (
     go build -o bin/goimports.exe golang.org/x/tools/cmd/goimports
   )
 
-  .\bin\goimports.exe -w -local github.com/gruntwork-io/terratest,github.com/aws/aws-sdk-go,github.com/deptofdefense ./test ./pkg/tools
+  .\bin\goimports.exe -w ^
+  -local github.com/gruntwork-io/terratest,github.com/aws/aws-sdk-go,github.com/deptofdefense ^
+  -l ^
+  .\cmd\icecube ^
+  .\pkg\fs ^
+  .\pkg\log ^
+  .\pkg\server ^
+  .\pkg\template ^
+  .\pkg\tools
 
   exit /B 0
 )

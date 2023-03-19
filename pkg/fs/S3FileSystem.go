@@ -95,26 +95,33 @@ func (fs *S3FileSystem) Join(name ...string) string {
 
 func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEntry, error) {
 	directoryEntries := []DirectoryEntry{}
-	listObjectsV2Input := &s3.ListObjectsV2Input{
-		Bucket:    aws.String(fs.bucket),
-		Delimiter: aws.String("/"),
-	}
-	if fs.maxEntries != -1 && fs.maxEntries < 1000 {
-		listObjectsV2Input.MaxKeys = int32(fs.maxEntries)
-	}
-	if name != "/" {
-		listObjectsV2Input.Prefix = aws.String(fs.key(name) + "/")
-	} else {
-		listObjectsV2Input.Prefix = aws.String("")
-	}
-	for listObjectsV2Paginator := s3.NewListObjectsV2Paginator(fs.s3, listObjectsV2Input); listObjectsV2Paginator.HasMorePages(); {
-		listObjectsV2Output, err := listObjectsV2Paginator.NextPage(ctx)
+	// truncated, continuationToken, and startAfter are used to iterate through the bucket
+	//truncated := true
+	var marker *string
+	// if truncated continue iterating through the bucket
+	for i := 0; i < 20; i++ {
+		listObjectsInput := &s3.ListObjectsInput{
+			Bucket:    aws.String(fs.bucket),
+			Delimiter: aws.String("/"),
+		}
+		if fs.maxEntries != -1 && fs.maxEntries < 1000 {
+			listObjectsInput.MaxKeys = int32(fs.maxEntries)
+		}
+		if name != "/" {
+			listObjectsInput.Prefix = aws.String(fs.key(name) + "/")
+		} else {
+			listObjectsInput.Prefix = aws.String("")
+		}
+		if marker != nil {
+			listObjectsInput.Marker = marker
+		}
+		listObjectsOutput, err := fs.s3.ListObjects(ctx, listObjectsInput)
 		if err != nil {
 			return nil, err
 		}
 		if fs.maxEntries != -1 {
 			// limit on number of directory entries
-			for _, commonPrefix := range listObjectsV2Output.CommonPrefixes {
+			for _, commonPrefix := range listObjectsOutput.CommonPrefixes {
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    aws.ToString(commonPrefix.Prefix),
 					dir:     true,
@@ -128,7 +135,7 @@ func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEn
 			if len(directoryEntries) == fs.maxEntries {
 				break
 			}
-			for _, object := range listObjectsV2Output.Contents {
+			for _, object := range listObjectsOutput.Contents {
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    aws.ToString(object.Key),
 					dir:     (object.Size == 0),
@@ -144,7 +151,7 @@ func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEn
 			}
 		} else {
 			// no limit for number of directory entries
-			for _, commonPrefix := range listObjectsV2Output.CommonPrefixes {
+			for _, commonPrefix := range listObjectsOutput.CommonPrefixes {
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    aws.ToString(commonPrefix.Prefix),
 					dir:     true,
@@ -152,7 +159,7 @@ func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEn
 					size:    0,
 				})
 			}
-			for _, object := range listObjectsV2Output.Contents {
+			for _, object := range listObjectsOutput.Contents {
 				directoryEntries = append(directoryEntries, &S3DirectoryEntry{
 					name:    aws.ToString(object.Key),
 					dir:     (object.Size == 0),
@@ -161,8 +168,12 @@ func (fs *S3FileSystem) ReadDir(ctx context.Context, name string) ([]DirectoryEn
 				})
 			}
 		}
-
+		if !listObjectsOutput.IsTruncated {
+			break
+		}
+		marker = listObjectsOutput.NextMarker
 	}
+
 	return directoryEntries, nil
 }
 

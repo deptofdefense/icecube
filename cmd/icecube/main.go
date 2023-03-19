@@ -21,14 +21,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gofrs/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/deptofdefense/icecube/pkg/fs"
 	"github.com/deptofdefense/icecube/pkg/log"
 	"github.com/deptofdefense/icecube/pkg/server"
@@ -961,6 +961,11 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 							}
 							buf := bytes.NewBuffer([]byte{})
 							// Render Directory Template
+							_ = logger.Log("Rendering directory template", map[string]interface{}{
+								"path":              trimmedPath,
+								"icecube_trace_id":  icecubeTraceID,
+								"directory_entries": len(directoryEntries),
+							})
 							executeError := directoryTemplate.Execute(buf, map[string]interface{}{
 								"Name":             trimmedPath,
 								"DirectoryEntries": directoryEntries,
