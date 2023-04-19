@@ -16,31 +16,46 @@ start the icecube server
 Usage:
   icecube serve [flags]
 
+Examples:
+serve --addr :8080 --server-cert server.crt --server-key server.key --root /www
+serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-systems ["/www"] --sites '{"localhost": "/www"}'  
+
 Flags:
   -a, --addr string                    address that icecube will listen on (default ":8080")
-      --behavior-not-found string      default behavior when a file is not found.  One of: redirect,none (default "none")
+      --aws-access-key-id string       AWS Access Key ID
+      --aws-default-region string      AWS Default Region
+      --aws-profile string             AWS Profile
+      --aws-region string              AWS Region (overrides default region)
+      --aws-secret-access-key string   AWS Secret Access Key
+      --aws-session-token string       AWS Session Token
+      --behavior-not-found string      default behavior when a file is not found.  One of: redirect,none (default "none")       
+      --directory-index string         index file for directories (default "index.html")
+      --directory-trailing-slash       append trailing slash to directories
       --dry-run                        exit after checking configuration
+      --file-systems string            additional file systems in the format of a json array of strings
   -h, --help                           help for serve
       --keylog string                  path to the key log output.  Also requires unsafe flag.
   -l, --log string                     path to the log output.  Defaults to stdout. (default "-")
       --public-location string         the public location of the server used for redirects
       --redirect string                address that icecube will listen to and redirect requests to the public location
-  -r, --root string                    path to the document root served
-      --server-cert string             path to server public cert
-      --server-key string              path to server private key
+  -r, --root string                    path to the default document root served
+      --server-cert string             path to default server public cert
+      --server-key string              path to default server private key
+      --server-key-pairs string        additional server key pairs in the format of a json array of arrays [[path to server public cert, path to server private key],...]
+      --sites string                   sites hosted by the server in the format of a json map of server name to file system     
       --timeout-idle string            maximum amount of time to wait for the next request when keep-alives are enabled (default "5m")
       --timeout-read string            maximum duration for reading the entire request (default "15m")
       --timeout-write string           maximum duration before timing out writes of the response (default "5m")
-      --tls-cipher-suites string       list of supported cipher suites for TLS versions up to 1.2 (TLS 1.3 is not configurable)
+      --tls-cipher-suites string       list of supported cipher suites for TLS versions up to 1.2 (TLS 1.3 is not configurable) 
       --tls-curve-preferences string   curve preferences (default "X25519,CurveP256,CurveP384,CurveP521")
       --tls-max-version string         maximum TLS version accepted for requests (default "1.3")
       --tls-min-version string         minimum TLS version accepted for requests (default "1.0")
-      --unsafe                         allow unsafe configuration
+      --unsafe                         allow unsafe configurationq
 ```
 
 ### Network Encryption
 
-**icecube** requires the use of a server certificate.  The server certificate is loaded from a PEM-encoded x509 key pair using the [LoadX509KeyPair](https://golang.org/pkg/crypto/tls/#LoadX509KeyPair) function.  The location of the key pair is specified using the `--server-cert` and `--server-key` command line flags.
+**icecube** requires the use of a server certificate.  The server certificate is loaded from a PEM-encoded x509 key pair using the [LoadX509KeyPair](https://golang.org/pkg/crypto/tls/#LoadX509KeyPair) function.  The location of the key pair is specified using the `--server-cert` and `--server-key` command line flags.  Alternatively, if you wish to use [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs` command line flag to specify multiple certificates.
 
 ## Examples
 
@@ -51,7 +66,17 @@ icecube serve \
 --server-cert temp/server.crt \
 --server-key temp/server.key \
 --root examples/public \
---behavior-not-found redirect
+--behavior-not-found redirect \
+--directory-index index.html
+```
+
+If you wish to serve multiple sites using [Server Name Indication](https://https.cio.gov/sni/), use the `server-key-pairs`, `file-systems`, and `sites` command line arguments.  Server key pairs precedence follows their place in the array.
+
+```shell
+icecube serve \
+--server-key-pairs '[["temp/a.crt", "temp/a.key"], ["temp/b.crt", "temp/b.key"]]' \
+--file-systems '["/www/a", "/www/b"]' \
+--sites '{"a.localhost": "/www/a", "b.localhost" : "/www/b"}'
 ```
 
 ## Building
@@ -62,6 +87,8 @@ This project uses [direnv](https://direnv.net/) to manage environment variables 
 
 If using `macOS`, follow the `macOS` instructions below.
 
+If using `Windows`, following the `Windows` instructions below.
+
 To build a binary for development use `make bin/icecube`.  For a release call `make build_release` or call the `build-release` script directly.  Alternatively, you can always call [gox](https://github.com/mitchellh/gox) or `go build` directly.
 
 ### macOS
@@ -69,6 +96,12 @@ To build a binary for development use `make bin/icecube`.  For a release call `m
 You can install `go` on macOS using homebrew with `brew install go`.
 
 To install `direnv` on `macOS` use `brew install direnv`.  If using bash, then add `eval \"$(direnv hook bash)\"` to the `~/.bash_profile` file .  If using zsh, then add `eval \"$(direnv hook zsh)\"` to the `~/.zshrc` file.
+
+### Windows
+
+Download the latest Windows release for `go` from [https://go.dev/dl/](https://go.dev/dl/) and install it.
+
+For a `PowerShell` terminal, call the `.\env.ps1` file to update the local environment variables.
 
 ## Testing
 

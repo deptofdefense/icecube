@@ -14,11 +14,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/deptofdefense/icecube/pkg/fs"
 )
 
-func ServeFile(w http.ResponseWriter, r *http.Request, fs afero.Fs, p string, modtime time.Time, download bool, errorHandler func(w http.ResponseWriter, r *http.Request, err error) error) {
-	f, err := fs.Open(p)
+func ServeFile(w http.ResponseWriter, r *http.Request, fs fs.FileSystem, p string, modtime time.Time, download bool, errorHandler func(w http.ResponseWriter, r *http.Request, err error) error) {
+	f, err := fs.Open(r.Context(), p)
 	if err != nil {
 		if errorHandler != nil {
 			err = errorHandler(w, r, err)

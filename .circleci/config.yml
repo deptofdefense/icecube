@@ -1,21 +1,41 @@
+# =================================================================
+#
+# Work of the U.S. Department of Defense, Defense Digital Service.
+# Released as open source under the MIT License.  See LICENSE file.
+#
+# =================================================================
+
 version: "2.1"
 
 executors:
-  # `main` uses the `cimg/go:1.17` docker image.
-  main:
-    docker:
-      - image: cimg/go:1.17
+
+  # `arm` uses an ARM machine image.
+  arm:
+    machine:
+      image: ubuntu-2004:202101-01
+    resource_class: arm.medium
 
   # `base` uses the `cimg/base` docker image.
   base:
     docker:
-      - image: cimg/base:2020.07
+      - image: cimg/base:2023.02
+
+  # `main` uses the `cimg/go:1.20` docker image.
+  main:
+    docker:
+      - image: cimg/go:1.20
+
+  # `main_xlarge` uses the `cimg/go:1.20` docker image with a large resource class.
+  main_xlarge:
+    docker:
+      - image: cimg/go:1.20
+    resource_class: xlarge
 
   # `macos` uses the macOS machine image.
   macos:
     macos:
-      xcode: 12.4.0
-      resource_class: medium
+      xcode: 14.2.0
+      resource_class: macos.x86.medium.gen2
 
   # `windows` uses the Windows machine image.
   windows:
@@ -53,7 +73,7 @@ jobs:
 
   # `build` builds the executables
   build:
-    executor: main
+    executor: main_xlarge
     steps:
       - checkout
 
@@ -62,6 +82,12 @@ jobs:
 
       # Tidy dependencies
       - run: make tidy
+
+      # Make gox
+      - run: make bin/gox
+
+      # Print supported OS/Arch combinations
+      - run: bin/gox -osarch-list
 
       # Build Executeables
       - run: make build_release
@@ -72,15 +98,25 @@ jobs:
       - store_artifacts:
           path: bin
           destination: /
+
       - persist_to_workspace:
           root: bin
           paths:
             - icecube_darwin_amd64
             - icecube_darwin_arm64
+            - icecube_freebsd_386
+            - icecube_freebsd_amd64
+            - icecube_freebsd_arm
             - icecube_linux_386
             - icecube_linux_amd64
             - icecube_linux_arm
             - icecube_linux_arm64
+            - icecube_netbsd_386
+            - icecube_netbsd_amd64
+            - icecube_netbsd_arm
+            - icecube_openbsd_386
+            - icecube_openbsd_amd64
+            - icecube_solaris_amd64
             - icecube_windows_386.exe
             - icecube_windows_amd64.exe
 
@@ -102,6 +138,15 @@ jobs:
           at: bin
       - run: bin/icecube_linux_386 --help
       - run: bin/icecube_linux_amd64 --help
+
+  # `verify_linux_arm` verifys the linux/arm build
+  verify_linux_arm:
+    executor: arm
+    steps:
+      - attach_workspace:
+          at: bin
+      - run: bin/icecube_linux_arm --help
+      - run: bin/icecube_linux_arm64 --help
 
   # `verify_macos` verifys the macOS build
   verify_macos:
@@ -129,6 +174,9 @@ workflows:
       - build
       - build_docker
       - verify_linux:
+          requires:
+            - build
+      - verify_linux_arm:
           requires:
             - build
       - verify_macos:

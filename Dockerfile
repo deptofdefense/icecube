@@ -1,5 +1,5 @@
 # build stage
-FROM golang:alpine3.13 AS builder
+FROM golang:1.20-alpine3.17 AS builder
 
 RUN apk update && apk add --no-cache git make gcc g++ ca-certificates && update-ca-certificates
 
@@ -16,7 +16,7 @@ RUN rm -f bin/gox bin/icecube_linux_amd64 && make bin/gox && bin/gox \
 github.com/deptofdefense/icecube/cmd/icecube
 
 # final stage
-FROM alpine:3.15
+FROM alpine:3.17
 
 RUN apk update && apk add --no-cache ca-certificates && update-ca-certificates
 
