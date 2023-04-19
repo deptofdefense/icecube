@@ -5,15 +5,5 @@
 //
 // =================================================================
 
-package fs
-
-import (
-	"time"
-)
-
-type FileInfo interface {
-	IsDir() bool
-	Name() string
-	ModTime() time.Time
-	Size() int64
-}
+// Package template inclues functions for rendering a template for a directory listing.
+package template

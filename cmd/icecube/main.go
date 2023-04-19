@@ -32,7 +32,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/deptofdefense/icecube/pkg/fs"
+	"github.com/deptofdefense/icecube/pkg/lfs"
 	"github.com/deptofdefense/icecube/pkg/log"
+	"github.com/deptofdefense/icecube/pkg/s3fs"
 	"github.com/deptofdefense/icecube/pkg/server"
 	"github.com/deptofdefense/icecube/pkg/template"
 )
@@ -260,27 +262,15 @@ func initViper(cmd *cobra.Command) (*viper.Viper, error) {
 	return v, nil
 }
 
-func initS3Client(v *viper.Viper) *s3.Client {
+func initS3Client(v *viper.Viper, partition string, region string) *s3.Client {
 	accessKeyID := v.GetString(flagAWSAccessKeyID)
 	secretAccessKey := v.GetString(flagAWSSecretAccessKey)
 	sessionToken := v.GetString(flagAWSSessionToken)
 	usePathStyle := v.GetBool(flagAWSS3UsePathStyle)
 
-	region := v.GetString(flagAWSRegion)
-	if len(region) == 0 {
-		if defaultRegion := v.GetString(flagAWSDefaultRegion); len(defaultRegion) > 0 {
-			region = defaultRegion
-		}
-	}
-
 	config := aws.Config{
 		RetryMaxAttempts: 3,
 		Region:           region,
-	}
-
-	partition := v.GetString(flagAWSPartition)
-	if len(partition) == 0 {
-		partition = "aws"
 	}
 
 	if e := v.GetString(flagAWSS3Endpoint); len(e) > 0 {
@@ -315,9 +305,11 @@ func initS3Client(v *viper.Viper) *s3.Client {
 		}
 	}
 
-	return s3.NewFromConfig(config, func(o *s3.Options) {
+	client := s3.NewFromConfig(config, func(o *s3.Options) {
 		o.UsePathStyle = usePathStyle
 	})
+
+	return client
 }
 
 func checkConfig(v *viper.Viper) error {
@@ -615,25 +607,118 @@ func initTLSConfig(v *viper.Viper, defaultCertificate *tls.Certificate, certific
 	return config, nil
 }
 
-func initFileSystem(ctx context.Context, rootPath string, s3Client *s3.Client, maxDirectoryEntries int) fs.FileSystem {
+func initFileSystem(ctx context.Context, v *viper.Viper, rootPath string, partition string, defaultRegion string, maxDirectoryEntries int) fs.FileSystem {
 	if strings.HasPrefix(rootPath, "s3://") {
-		rootParts := strings.Split(rootPath[len("s3://"):], "/")
-		bucket := rootParts[0]
-		prefix := strings.Join(rootParts[1:], "/")
-		bucketCreationDate := time.Now()
-		listBucketsOutput, err := s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
+		//
+		// List all buckets in accounts and store creation date
+		//
+
+		clients := map[string]*s3.Client{}
+
+		//
+		// Initialize Default Client
+		//
+
+		clients[defaultRegion] = initS3Client(v, partition, defaultRegion)
+
+		//
+
+		bucketCreationDates := map[string]time.Time{}
+		bucketRegions := map[string]string{}
+
+		//
+		// List Buckets
+		//
+
+		listBucketsOutput, err := clients[defaultRegion].ListBuckets(ctx, &s3.ListBucketsInput{})
 		if err == nil {
 			for _, b := range listBucketsOutput.Buckets {
-				if bucket == aws.ToString(b.Name) {
-					bucketCreationDate = aws.ToTime(b.CreationDate)
-					break
-				}
+				bucketCreationDates[aws.ToString(b.Name)] = aws.ToTime(b.CreationDate)
 			}
 		}
-		return fs.NewS3FileSystem(bucket, prefix, s3Client, bucketCreationDate, maxDirectoryEntries)
+
+		//
+		// If root is the account
+		//
+
+		if rootPath == "s3://" {
+			//
+			// Get Region for each Bucket
+			//
+			for bucketName, _ := range bucketCreationDates {
+				getBucketLocationOutput, err := clients[defaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+					Bucket: aws.String(bucketName),
+				})
+				if err == nil {
+					if locationConstraint := string(getBucketLocationOutput.LocationConstraint); len(locationConstraint) > 0 {
+						bucketRegions[bucketName] = locationConstraint
+					} else {
+						bucketRegions[bucketName] = "us-east-1"
+					}
+				}
+			}
+
+			//
+			// Get Client for each region with a bucket
+			//
+
+			for _, bucketRegion := range bucketRegions {
+				if _, ok := clients[bucketRegion]; !ok {
+					clients[bucketRegion] = initS3Client(v, partition, bucketRegion)
+				}
+			}
+
+			return s3fs.NewS3FileSystem(
+				defaultRegion,
+				"",
+				"",
+				clients,
+				bucketRegions,
+				bucketCreationDates,
+				maxDirectoryEntries)
+		}
+
+		//
+		// If root is a bucket
+		//
+
+		rootParts := strings.Split(rootPath[len("s3://"):], "/")
+		bucketName := rootParts[0]
+		prefix := strings.Join(rootParts[1:], "/")
+
+		getBucketLocationOutput, err := clients[defaultRegion].GetBucketLocation(ctx, &s3.GetBucketLocationInput{
+			Bucket: aws.String(bucketName),
+		})
+		if err == nil {
+			if locationConstraint := string(getBucketLocationOutput.LocationConstraint); len(locationConstraint) > 0 {
+				bucketRegions[bucketName] = locationConstraint
+			} else {
+				bucketRegions[bucketName] = "us-east-1"
+			}
+		}
+
+		//
+		// Get Client for the region of the bucket
+		//
+
+		if bucketRegion, ok := bucketRegions[bucketName]; ok {
+			clients[bucketRegion] = initS3Client(v, partition, bucketRegion)
+		} else {
+			// It GetBucketLocation is not allowed, assume that the default region is the region containing the bucket
+			clients[defaultRegion] = initS3Client(v, partition, defaultRegion)
+		}
+
+		return s3fs.NewS3FileSystem(
+			defaultRegion,
+			bucketName,
+			prefix,
+			clients,
+			bucketRegions,
+			bucketCreationDates,
+			maxDirectoryEntries)
 	}
 
-	return fs.NewLocalFileSystem(rootPath)
+	return lfs.NewLocalFileSystem(rootPath)
 }
 
 func initFileSystems(ctx context.Context, v *viper.Viper, maxDirectoryEntries int) (map[string]fs.FileSystem, error) {
@@ -647,33 +732,27 @@ func initFileSystems(ctx context.Context, v *viper.Viper, maxDirectoryEntries in
 		}
 	}
 
-	s3ClientNeeded := false
-	if strings.HasPrefix(rootPath, "s3://") {
-		s3ClientNeeded = true
-	} else {
-		for _, str := range fileSystemPathsSlice {
-			if strings.HasPrefix(str, "s3://") {
-				s3ClientNeeded = true
-				break
-			}
-		}
+	partition := v.GetString(flagAWSPartition)
+	if len(partition) == 0 {
+		partition = "aws"
 	}
 
-	var s3Client *s3.Client
-
-	if s3ClientNeeded {
-		s3Client = initS3Client(v)
+	region := v.GetString(flagAWSRegion)
+	if len(region) == 0 {
+		if defaultRegion := v.GetString(flagAWSDefaultRegion); len(defaultRegion) > 0 {
+			region = defaultRegion
+		}
 	}
 
 	fileSystems := map[string]fs.FileSystem{}
 
 	if len(rootPath) > 0 {
-		fileSystems[rootPath] = initFileSystem(ctx, rootPath, s3Client, maxDirectoryEntries)
+		fileSystems[rootPath] = initFileSystem(ctx, v, rootPath, partition, region, maxDirectoryEntries)
 	}
 
 	if len(fileSystemPathsSlice) > 0 {
 		for _, fileSystemPath := range fileSystemPathsSlice {
-			fileSystems[fileSystemPath] = initFileSystem(ctx, fileSystemPath, s3Client, maxDirectoryEntries)
+			fileSystems[fileSystemPath] = initFileSystem(ctx, v, fileSystemPath, partition, region, maxDirectoryEntries)
 		}
 	}
 
@@ -958,6 +1037,7 @@ serve --addr :8080 --server-key-pairs '[["server.crt", "server.key"]]' --file-sy
 						http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 						return
 					}
+					fmt.Println("IsDir:", fi.IsDir())
 					if fi.IsDir() {
 						if directoryTrailingSlash {
 							if !strings.HasSuffix(cleanPath, "/") {

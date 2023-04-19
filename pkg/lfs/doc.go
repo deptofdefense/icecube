@@ -5,15 +5,5 @@
 //
 // =================================================================
 
-package fs
-
-import (
-	"time"
-)
-
-type FileInfo interface {
-	IsDir() bool
-	Name() string
-	ModTime() time.Time
-	Size() int64
-}
+// Package lfs inclues a local file system
+package lfs

@@ -68,12 +68,21 @@ bin/icecube: ## Build icecube CLI for Darwin / amd64
 bin/icecube_linux_amd64: bin/gox ## Build icecube CLI for Darwin / amd64
 	scripts/build-release linux amd64
 
+#
+# Build Targets
+#
+
 .PHONY: build
 build: bin/icecube
 
 .PHONY: build_release
 build_release: bin/gox
 	scripts/build-release
+
+.PHONY: rebuild
+rebuild:
+	rm -f bin/icecube
+	make bin/icecube
 
 #
 # Local

@@ -16,6 +16,7 @@ type FileSystem interface {
 	IsNotExist(err error) bool
 	Join(name ...string) string
 	ReadDir(ctx context.Context, name string) ([]DirectoryEntry, error)
-	Stat(ctx context.Context, name string) (*FileInfo, error)
+	Size(ctx context.Context, name string) (int64, error)
+	Stat(ctx context.Context, name string) (FileInfo, error)
 	Open(ctx context.Context, name string) (io.ReadSeeker, error)
 }

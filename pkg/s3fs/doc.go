@@ -5,15 +5,5 @@
 //
 // =================================================================
 
-package fs
-
-import (
-	"time"
-)
-
-type FileInfo interface {
-	IsDir() bool
-	Name() string
-	ModTime() time.Time
-	Size() int64
-}
+// Package s3fs inclues a file system for reading from AWS S3
+package s3fs

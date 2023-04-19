@@ -54,7 +54,7 @@ if %1%==build_release (
       .\make.bat bin\gox.exe
   )
 
-  powershell .\scripts\build-release.ps1
+  powershell .\powershell\build-release.ps1
 
   exit /B 0
 )
@@ -124,7 +124,7 @@ if %1%==serve_example (
     if not exist "%~dp0temp\server.crt" (
         .\make.bat temp/server.crt
     )
-    
+
 
     .\bin\icecube.exe serve ^
     --addr :8080 ^
@@ -162,7 +162,7 @@ if %1%==serve_example_sni (
     if not exist "%~dp0temp\server_b.crt" (
         .\make.bat temp/server_b.crt
     )
-    
+
 
     .\bin\icecube.exe serve ^
     --addr :8080 ^
@@ -196,7 +196,7 @@ if %1%==temp/ca.crt (
     if not exist "%~dp0temp" (
         mkdir %~dp0temp
     )
-    
+
     C:\Users\pdufour\AppData\Local\Programs\Git\mingw64\bin\openssl.exe req ^
     -batch ^
     -x509 ^
@@ -215,7 +215,7 @@ if %1%==temp/ca.srl (
     if not exist "%~dp0temp" (
         mkdir %~dp0temp
     )
-    
+
     echo 01 >temp/ca.srl
 
     exit /B 0
@@ -226,7 +226,7 @@ if %1%==temp/index.txt (
     if not exist "%~dp0temp" (
         mkdir %~dp0temp
     )
-    
+
     copy NUL temp\index.txt
 
     exit /B 0
@@ -237,7 +237,7 @@ if %1%==temp/index.txt.attr (
     if not exist "%~dp0temp" (
         mkdir %~dp0temp
     )
-    
+
 	echo unique_subject = yes >temp/index.txt.attr
 
     exit /B 0
